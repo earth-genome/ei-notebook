@@ -1,0 +1,36 @@
+{
+  "input": {
+    "aoi": "gs://demeter-labs/coffee/geometries/costa_rica.geojson",
+    "positive_points": "gs://demeter-labs/tea/ei-datasets/pos_gdf_v1_sumatra_2024-11-10.parquet"
+  },
+  "lulc": {
+    "collection": "projects/sat-io/open-datasets/landcover/ESRI_Global-LULC_10m_TS",
+    "start_date": "2023-01-01",
+    "end_date": "2023-12-31",
+    "class_mapping": {
+      "input_classes": [1, 2, 4, 5, 7, 8, 9, 10, 11],
+      "output_classes": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "class_names": {
+        "1": "Water",
+        "2": "Trees",
+        "3": "Flooded Vegetation",
+        "4": "Crops",
+        "5": "Built Area",
+        "6": "Bare Ground",
+        "7": "Snow/Ice",
+        "8": "Clouds",
+        "9": "Rangeland"
+      }
+    }
+  },
+  "sampling": {
+    "scale": 200,
+    "class_values": [1, 2, 4, 5, 9],
+    "class_points": [200, 4500, 4500, 4500, 1000],
+    "seed": 0,
+    "buffer_size": 200
+  },
+  "output": {
+    "filtered_samples": "gs://demeter-labs/coffee/samples/costa_rica_neg_samples.parquet"
+  }
+} 
