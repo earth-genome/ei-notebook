@@ -1,8 +1,0 @@
-{
-    "parquet_localpath": "~/embeddings/sumatra_tea_embeddings.parquet",
-    "annoy_index_path": "/home/christopher.x.ren/ei-data/test_annoy_file.ann",
-    "mgrs_ids": ["48MUA", "48MTB", "48MTA", "47NMD", "47MQU", "47MQT"],
-    "start_date": "2023-01-01",
-    "end_date": "2024-01-01",
-    "imagery":"sentinel2_v02"
-}
