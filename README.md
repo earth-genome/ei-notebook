@@ -24,9 +24,15 @@ The Geolabeler provides an interactive map interface for labeling geographic poi
 - Automatic saving of labeled points as GeoJSON files
 
 To launch the labeling interface: run the `duckdb_ei.ipynb` cells. This will allow the user to search over the AOI that was processed in step 1 by performing similarity serarch in the embeddings using the `annoy` index.
-The outputs of this step will be a `geojson` of positive samples with the tile ID of the closest tile centroid as an identifier.
+The outputs of this step will be a `geojson` of positive samples (and optionally negative samples) with the tile ID of the closest tile centroid as an identifier.
 
 ### 2. Sample Negative Points
+
+It is possible to output positive and negative samples from the previous interactive labeling step. If that is your preferred method, you can skip right to step 3.
+
+However, we have found in experimentation that it is often best to have a training set class balance that roughly follows the real-world classs frequency of tiles. In the case of most applications, therefore, it is helpful to have many more negative samples than positive ones. 
+
+The script `sample_negatives.py` can automate the sampling of negative points, by intelligent sampling from the ESRI Global Land Use/Land Cover dataset.
 
 Run `sample_negatives.py` to generate negative samples using the ESRI Global Land Use/Land Cover dataset. This script:
 
@@ -36,7 +42,7 @@ Run `sample_negatives.py` to generate negative samples using the ESRI Global Lan
 - Maps LULC class integers to human-readable names
 - Outputs a parquet file of filtered negative samples
 
-The parameters, including the year of the ESRI LC map and, should be stored in a config file. An example for the tea v0 model is shown here:
+The parameters, including the year of the ESRI LC map and, should be stored in a config file. An example that could work for the pineapple mapping model is shown here:
 ```json
 {
   "input": {
@@ -93,13 +99,13 @@ Run `make_dataset.py` to combine positive and negative samples with embeddings i
 Example usage:
 ```
 python src/make_dataset.py \
-  --pos-gdf gs://demeter-labs/tea/ei-datasets/pos_gdf_v1_java_2024-11-10.parquet \
-  --neg-ei-gdf gs://demeter-labs/tea/ei-datasets/neg_gdf_v1_java_2024-11-10.parquet \
-  --neg-lulc-gdf gs://demeter-labs/tea/samples/java_neg_water_built_tree_rangeland_samples_10091.parquet \
-  --centroid-gdf gs://demeter-labs/tea/mgrs_tiles/centroid_gdf.parquet \
-  --embedding-db gs://demeter-labs/tea/embeddings/embeddings.duckdb \
-  --output-dir gs://demeter-labs/tea/training_data \
-  --region-name java \
+  --pos-gdf $LOCAL_DIR/pos_gdf_v1_java_2024-11-10.parquet \
+  --neg-ei-gdf $LOCAL_DIR/neg_gdf_v1_java_2024-11-10.parquet \
+  --neg-lulc-gdf $LOCAL_DIR/java_neg_water_built_tree_rangeland_samples_10091.parquet \
+  --centroid-gdf $LOCAL_DIR/mgrs_tiles/centroid_gdf.parquet \
+  --embedding-db $LOCAL_DIR/embeddings/embeddings.duckdb \
+  --output-dir $LOCAL_DIR/training_data \
+  --region-name costa_rica \
   --version v1
 ```
 
@@ -126,10 +132,10 @@ Run `tile_classifier.py` to train an XGBoost binary classifier on the embedding 
 Example usage:
 ```
 python src/tile_classifier.py \
-  --train-data gs://demeter-labs/tea/training_data/tile_classifier_dataset_v1_java_embeddings.parquet \
-  --embedding-dir gs://demeter-labs/tea/embeddings \
-  --output-dir gs://demeter-labs/tea/predictions \
-  --region-name java \
+  --train-data $LOCAL_DIR/training_data/tile_classifier_dataset_v1_java_embeddings.parquet \
+  --embedding-dir $LOCAL_DIR/embeddings \
+  --output-dir $LOCAL_DIR/predictions \
+  --region-name costa_rica \
   --version v1 \
   --pos-weight 2.0 \
   --test-size 0.25 \
@@ -155,9 +161,9 @@ Run `postprocess_detections.py` to process the tile classifier predictions into 
 Example usage:
 ```
 python src/postprocess_detections.py \
-  gs://demeter-labs/tea/predictions/tile_classifier_predictions_v1_java.parquet \
-  gs://demeter-labs/tea/tiles \
-  gs://demeter-labs/tea/predictions \
+  $LOCAL_DIR/predictions/tile_classifier_predictions_v1_java.parquet \
+  $LOCAL_DIR/tiles \
+  $LOCAL_DIR/predictions \
   --prob_threshold 0.9
 
 ```
