@@ -116,6 +116,12 @@ def main():
     hemisphere = 'N' if first_point.y >= 0 else 'S'
     utm_crs = f'EPSG:326{utm_zone:02d}' if hemisphere == 'N' else f'EPSG:327{utm_zone:02d}'
 
+    # Do some initial cleaning
+    before = len(samples_gdf)
+    samples_gdf = samples_gdf[~samples_gdf.geometry.isin(pos_gdf.geometry)]
+    after = len(samples_gdf)
+    logging.info(f"Removed {before - after} samples that exactly matched positive points.")
+
     # Filter samples
     samples_filtered = filter_samples(
         samples_gdf=samples_gdf,

@@ -1,7 +1,7 @@
 {
   "input": {
-    "aoi": "gs://demeter-labs/coffee/geometries/costa_rica.geojson",
-    "positive_points": "gs://demeter-labs/tea/ei-datasets/pos_gdf_v1_sumatra_2024-11-10.parquet"
+    "aoi": "/Users/ben/EarthGenome/code/ei-notebook/places/costa_rica.geojson",
+    "positive_points": "/Users/ben/EarthGenome/data/costa_rica_pineapple/positive_labels.parquet"
   },
   "lulc": {
     "collection": "projects/sat-io/open-datasets/landcover/ESRI_Global-LULC_10m_TS",
@@ -31,6 +31,6 @@
     "buffer_size": 200
   },
   "output": {
-    "filtered_samples": "gs://demeter-labs/coffee/samples/costa_rica_neg_samples.parquet"
+    "filtered_samples": "/Users/ben/EarthGenome/data/costa_rica_pineapple/costa_rica_neg_samples.parquet"
   }
 } 

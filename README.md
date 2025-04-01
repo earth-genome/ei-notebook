@@ -42,46 +42,52 @@ Run `sample_negatives.py` to generate negative samples using the ESRI Global Lan
 - Maps LULC class integers to human-readable names
 - Outputs a parquet file of filtered negative samples
 
-The parameters, including the year of the ESRI LC map and, should be stored in a config file. An example that could work for the pineapple mapping model is shown here:
+The parameters, including the year of the ESRI LC map and, should be stored in a config file. An example that might work for the pineapple mapping model is shown here. Please note that local files paths should be changed to match your set up.
+
 ```json
 {
   "input": {
-    "aoi": "gs://demeter-labs/tea/geometries/ra_java_only_aoi.geojson",
-    "positive_points": "gs://demeter-labs/tea/ei-datasets/pos_gdf_v1_sumatra_2024-11-10.parquet"
+    "aoi": "/Users/ben/EarthGenome/code/ei-notebook/places/costa_rica.geojson",
+    "positive_points": "/Users/ben/EarthGenome/data/costa_rica_pineapple/positive_labels.parquet"
   },
   "lulc": {
     "collection": "projects/sat-io/open-datasets/landcover/ESRI_Global-LULC_10m_TS",
-    "start_date": "2023-01-01",
-    "end_date": "2023-12-31",
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31",
     "class_mapping": {
       "input_classes": [1, 2, 4, 5, 7, 8, 9, 10, 11],
       "output_classes": [1, 2, 3, 4, 5, 6, 7, 8, 9],
       "class_names": {
         "1": "Water",
         "2": "Trees",
-        "3": "Built",
+        "3": "Flooded Vegetation",
         "4": "Crops",
-        "5": "Crops",
-        "6": "Flooded Vegetation",
-        "7": "Built",
-        "8": "Bare Ground",
+        "5": "Built Area",
+        "6": "Bare Ground",
+        "7": "Snow/Ice",
+        "8": "Clouds",
         "9": "Rangeland"
       }
     }
   },
   "sampling": {
-    "scale": 320,
+    "scale": 200,
     "class_values": [1, 2, 4, 5, 9],
-    "class_points": [200, 3000, 3000, 3000, 1000],
+    "class_points": [200, 4500, 4500, 4500, 1000],
     "seed": 0,
-    "buffer_size": 320
+    "buffer_size": 200
   },
   "output": {
-    "filtered_samples": "gs://demeter-labs/tea/samples/java_neg_water_built_tree_rangeland_samples_10091.parquet"
+    "filtered_samples": "/Users/ben/EarthGenome/data/costa_rica_pineapple/costa_rica_neg_samples.parquet"
   }
 } 
 ```
 
+Example usage:
+
+```
+python src/sample_negatives.py --config config/sample_negatives_config.json
+```
 
 ### 3. Create Training Dataset
 
@@ -99,14 +105,14 @@ Run `make_dataset.py` to combine positive and negative samples with embeddings i
 Example usage:
 ```
 python src/make_dataset.py \
-  --pos-gdf $LOCAL_DIR/pos_gdf_v1_java_2024-11-10.parquet \
-  --neg-ei-gdf $LOCAL_DIR/neg_gdf_v1_java_2024-11-10.parquet \
-  --neg-lulc-gdf $LOCAL_DIR/java_neg_water_built_tree_rangeland_samples_10091.parquet \
-  --centroid-gdf $LOCAL_DIR/mgrs_tiles/centroid_gdf.parquet \
-  --embedding-db $LOCAL_DIR/embeddings/embeddings.duckdb \
-  --output-dir $LOCAL_DIR/training_data \
-  --region-name costa_rica \
-  --version v1
+ --pos-gdf $LOCAL_DATA_DIR/positive_labels.parquet \
+ --neg-lulc-gdf $LOCAL_DATA_DIR/costa_rica_neg_samples.parquet \
+ --centroid-gdf $LOCAL_DATA_DIR/centroid_gdf.parquet \
+ --embedding-db $LOCAL_DATA_DIR/embeddings.db \
+ --output-dir $LOCAL_DATA_DIR/training_data \
+ --region-name costa_rica \
+ --version v1
+
 ```
 
 ### 4. Train Tile Classifier and Deploy

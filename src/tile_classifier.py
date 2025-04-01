@@ -11,6 +11,8 @@ import xgboost as xgb
 from sklearn.model_selection import train_test_split
 import numpy as np
 
+import os
+
 
 def train_classifier(tile_classifier_dataset_path, output_dir, pos_weight=1.0):
     tile_classifier_dataset = gpd.read_parquet(tile_classifier_dataset_path).reset_index(drop=True)
@@ -86,6 +88,8 @@ def plot_curves(y_test, y_pred_proba, output_dir):
     ax2.set_ylabel('Precision')
     ax2.set_title('Precision-Recall Curve')
     ax2.legend(loc="lower left")
+
+    os.makedirs(output_dir, exist_ok=True)
 
     plt.tight_layout()
     plt.savefig(Path(output_dir) / 'model_curves.png')
