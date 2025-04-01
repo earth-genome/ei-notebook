@@ -2,7 +2,22 @@
 
 This repository contains a pipeline for training a tile-based crop classifier using satellite imagery and interactive labeling.
 
-## Overview
+## Set up
+First, please download the supporting files. These include a pre-generated `annoy` search index, tile geometries, and raw embeddings.
+
+`gsutil cp -r gs://ei-notebook-assets/costa_rica_pineapple/ $LOCAL_DIR`
+
+where $LOCAL_DIR is a local working directory that we will reference throughout this script.
+
+Before starting work, set up your local code environment. It is recommended to use `conda` or `mamba` to manage python dependencies.
+
+```
+mamba create -n ei-notebook python=3.12 -y
+mamba activate ei-notebook
+mamba install -c conda-forge --file ./requirements_v2.txt -y
+```
+
+## Piepeline Overview
 
 The pipeline consists of several steps:
 
