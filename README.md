@@ -17,14 +17,15 @@ The pipeline consists of several steps:
 ### 1. Interactive labeling of examples
 The Geolabeler provides an interactive map interface for labeling geographic points. Key features:
 
-- Interactive map with multiple basemap options (Maptiler satellite, HSV median composite, Google Hybrid)
+- Interactive map with multiple basemap options (Maptiler satellite, RGB/HSV median composite, Google Hybrid). **Please note that the RGB/HSV are generated on the fly from GEE. The dates for this imagery should be set using the config.**
 - Point and lasso selection modes for efficient labeling
 - Positive/negative/erase labeling options
 - Direct Google Maps linking for reference
 - Automatic saving of labeled points as GeoJSON files
 
-To launch the labeling interface: run the `duckdb_ei.ipynb` cells. This will allow the user to search over the AOI that was processed in step 1 by performing similarity serarch in the embeddings using the `annoy` index.
-The outputs of this step will be a `geojson` of positive samples (and optionally negative samples) with the tile ID of the closest tile centroid as an identifier.
+To launch the labeling interface, first set up your `config` file. An example is provided at `./config/ui_config.json`. Next, run the `duckdb_ei.ipynb` cells. This will allow the user to search in the AOI by performing similarity serarch in the embeddings using a supplied `annoy` index.
+
+The outputs of this step will be a `parquet` of positive samples (and optionally negative samples) with the tile ID of the closest tile centroid as an identifier.
 
 ### 2. Sample Negative Points
 
@@ -102,7 +103,7 @@ Run `make_dataset.py` to combine positive and negative samples with embeddings i
   - A dataset with just the samples and labels
   - A dataset that includes the embeddings for model training
 
-Example usage:
+Example usage, if you used the notebook to create positive labels and automatically sampled negative examples:
 ```
 python src/make_dataset.py \
  --pos-gdf $LOCAL_DATA_DIR/positive_labels.parquet \
@@ -113,6 +114,17 @@ python src/make_dataset.py \
  --region-name costa_rica \
  --version v1
 
+```
+
+Example usage where you exported both positive and negative examples from the notebook:
+```
+python src/make_dataset.py \
+ --full-dataset $LOCAL_DATA_DIR/full_labels.parquet \
+ --centroid-gdf $LOCAL_DATA_DIR/centroid_gdf.parquet \
+ --embedding-db $LOCAL_DATA_DIR/embeddings.db \
+ --output-dir $LOCAL_DATA_DIR/training_data \
+ --region-name costa_rica \
+ --version v1
 ```
 
 ### 4. Train Tile Classifier and Deploy
@@ -138,14 +150,14 @@ Run `tile_classifier.py` to train an XGBoost binary classifier on the embedding 
 Example usage:
 ```
 python src/tile_classifier.py \
-  --train-data $LOCAL_DIR/training_data/tile_classifier_dataset_v1_java_embeddings.parquet \
-  --embedding-dir $LOCAL_DIR/embeddings \
-  --output-dir $LOCAL_DIR/predictions \
-  --region-name costa_rica \
-  --version v1 \
-  --pos-weight 2.0 \
-  --test-size 0.25 \
-  --random-seed 42
+    --classifier-dataset $LOCAL_DATA_DIR/training_data/tile_classifier_dataset_v1_costa_rica_embeddings.parquet \
+    --embedding-dir $LOCAL_DATA_DIR/embeddings \
+    --centroid-path $LOCAL_DATA_DIR/centroid_gdf.parquet \
+    --output-dir $LOCAL_DATA_DIR//output \
+    --version 1 \
+    --region costa_rica \
+    --pos-weight 1.0
+
 ```
 
 ### 5. Postprocess Detections
@@ -167,11 +179,10 @@ Run `postprocess_detections.py` to process the tile classifier predictions into 
 Example usage:
 ```
 python src/postprocess_detections.py \
-  $LOCAL_DIR/predictions/tile_classifier_predictions_v1_java.parquet \
-  $LOCAL_DIR/tiles \
-  $LOCAL_DIR/predictions \
-  --prob_threshold 0.9
-
+    --input_file $LOCAL_DATA_DIR/output/tile_classifier_predictions_1_costa_rica_posw1.0.parquet \
+    --tiles_dir $LOCAL_DATA_DIR/tiles \
+    --output_dir $LOCAL_DATA_DIR/output \
+    --prob_threshold 0.90
 ```
 
 
