@@ -2,12 +2,22 @@
 
 This repository contains a pipeline for training a tile-based crop classifier using satellite imagery and interactive labeling.
 
-## Set up
-First, please download the supporting files. These include a pre-generated `annoy` search index, tile geometries, and raw embeddings.
+## Prerequisites
+First, there are some basic system requirements to take care of. Please refer to the linked documentation for installation.
+1. `gcloud` CLI: https://cloud.google.com/sdk/docs/install
+2. `earthengine` python client library: https://developers.google.com/earth-engine/guides/python_install
 
-`gsutil cp -r gs://ei-notebook-assets/costa_rica_pineapple/ $LOCAL_DIR`
+Please make sure you are authenticated with these tools before starting.
 
-where $LOCAL_DIR is a local working directory that we will reference throughout this script.
+Next, please download the supporting files. These include a pre-generated `annoy` search index, tile geometries, and raw embeddings.
+
+`gsutil cp -r gs://ei-notebook-assets/costa_rica_pineapple/ /path/to/loca/data/dir`
+
+Next, set the LOCAL_DATA_DIR shell variable to the downloaded folder, e.g.
+
+`LOCAL_DATA_DIR=/Users/ben/EarthGenome/data/costa_rica_pineapple`
+
+This location will be referenced throughout this workflow.
 
 Before starting work, set up your local code environment. It is recommended to use `conda` or `mamba` to manage python dependencies.
 
@@ -26,6 +36,7 @@ The pipeline consists of several steps:
 3. Create training dataset
 4. Train tile classifier and run inference
 5. Postprocess detections
+6. Iterate!
 
 ## Pipeline Steps
 
@@ -38,7 +49,7 @@ The Geolabeler provides an interactive map interface for labeling geographic poi
 - Direct Google Maps linking for reference
 - Automatic saving of labeled points as GeoJSON files
 
-To launch the labeling interface, first set up your `config` file. An example is provided at `./config/ui_config.json`. Next, run the `duckdb_ei.ipynb` cells. This will allow the user to search in the AOI by performing similarity serarch in the embeddings using a supplied `annoy` index.
+To launch the labeling interface, first set up your `config` file. An example is provided at `./config/ui_config.json`. Next, run the `duckdb_ei.ipynb` cells. This will allow the user to search in the AOI by performing similarity serarch in the embeddings using a supplied `annoy` index. Please use the python environment you set up earlier to run the notebook.
 
 The outputs of this step will be a `parquet` of positive samples (and optionally negative samples) with the tile ID of the closest tile centroid as an identifier.
 
@@ -199,6 +210,9 @@ python src/postprocess_detections.py \
     --output_dir $LOCAL_DATA_DIR/output \
     --prob_threshold 0.90
 ```
+
+### 6. Iterate!
+You should now be able to return the interactive notebook, load in the new detections and iterate on mapping.
 
 
 
