@@ -5,6 +5,8 @@ import duckdb
 from pathlib import Path
 from typing import Union, Optional
 
+import os
+
 
 def process_data(
         full_dataset_path: Optional[Union[str, Path]] = None,
@@ -50,17 +52,25 @@ def process_data(
         if not all([pos_gdf_path, centroid_gdf_path]):
             raise ValueError("Must provide either full_dataset or pos_gdf and centroid_gdf")
 
+       
+
         pos_gdf = gpd.read_parquet(pos_gdf_path)
         centroid_gdf = gpd.read_parquet(centroid_gdf_path)
-        
+
+        assert 'tile_id' in centroid_gdf.columns, "centroid_gdf must have a 'tile_id' column"
+
         def add_utm_info(gdf):
             gdf['utm_zone'] = ((gdf.geometry.x + 180) / 6 + 1).astype(int)
             gdf['hemisphere'] = gdf.geometry.y.apply(lambda y: 'N' if y >= 0 else 'S')
             gdf['utm_epsg'] = gdf.apply(lambda x: f"EPSG:{'326' if x.hemisphere == 'N' else '327'}{x.utm_zone:02d}", axis=1)
             return gdf
+        
+       
 
         centroid_gdf = add_utm_info(centroid_gdf)
         pos_gdf = add_utm_info(pos_gdf)
+
+    
 
         neg_samples = []
 
@@ -94,13 +104,15 @@ def process_data(
             zone_pos = pos_gdf[pos_gdf.utm_epsg == utm_epsg].to_crs(utm_epsg)
             zone_cent = centroid_gdf[centroid_gdf.utm_epsg == utm_epsg].to_crs(utm_epsg)
             
-            zone_joined = gpd.sjoin_nearest(zone_pos, zone_cent, how='left')
+            zone_joined = gpd.sjoin_nearest(zone_pos, zone_cent[['tile_id', 'geometry']], how='left')
+            zone_joined = zone_joined.rename(columns={'tile_id_right': 'tile_id'})
+            
             zone_joined = zone_joined.to_crs('EPSG:4326')
             pos_with_tiles.append(zone_joined)
+
         
         pos_with_tiles = pd.concat(pos_with_tiles)
         pos_with_tiles = pos_with_tiles.drop(columns=['utm_zone', 'hemisphere', 'utm_epsg', 'index_right'], errors='ignore')
-
         if 'class' not in pos_with_tiles.columns:
             pos_with_tiles['class'] = 'ei_pos'
         pos_with_tiles['label'] = 1
@@ -117,6 +129,7 @@ def process_data(
     full_gdf = full_gdf.drop_duplicates(subset=['tile_id'])
     print(f"Number of negatives: {len(full_gdf[full_gdf.label == 0])}, Number of positives: {len(full_gdf[full_gdf.label == 1])}")
     print(f"Full GeoDataFrame has {len(full_gdf)} rows after dropping duplicates")
+    os.makedirs(output_dir, exist_ok=True)
     full_gdf.to_parquet(f"{output_dir}/tile_classifier_dataset_{version}_{region_name}.parquet")
     print(f"Saved {region_name} data to {output_dir}/tile_classifier_dataset_{version}_{region_name}.parquet")
 
