@@ -69,13 +69,13 @@ Run `sample_negatives.py` to generate negative samples using the ESRI Global Lan
 - Maps LULC class integers to human-readable names
 - Outputs a parquet file of filtered negative samples
 
-The parameters, including the year of the ESRI LC map and, should be stored in a config file. An example that might work for the pineapple mapping model is shown here. Please note that local files paths should be changed to match your set up.
+The parameters, including the year of the ESRI LC map and, should be stored in a config file. An example that might work for in Costa Rica mapping is shown here. Please note that local files paths should be changed to match your set up.
 
 ```json
 {
   "input": {
     "aoi": "/Users/ben/EarthGenome/code/ei-notebook/places/costa_rica.geojson",
-    "positive_points": "/Users/ben/EarthGenome/data/costa_rica_pineapple/positive_labels.parquet"
+    "positive_points": "/Users/ben/EarthGenome/data/costa_rica/positive_labels.parquet"
   },
   "lulc": {
     "collection": "projects/sat-io/open-datasets/landcover/ESRI_Global-LULC_10m_TS",
@@ -105,7 +105,7 @@ The parameters, including the year of the ESRI LC map and, should be stored in a
     "buffer_size": 200
   },
   "output": {
-    "filtered_samples": "/Users/ben/EarthGenome/data/costa_rica_pineapple/costa_rica_neg_samples.parquet"
+    "filtered_samples": "/Users/ben/EarthGenome/data/costa_rica/costa_rica_neg_samples.parquet"
   }
 } 
 ```
