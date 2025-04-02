@@ -11,11 +11,11 @@ Please make sure you are authenticated with these tools before starting.
 
 Next, please download the supporting files. These include a pre-generated `annoy` search index, tile geometries, and raw embeddings.
 
-`gsutil cp -r gs://ei-notebook-assets/costa_rica_pineapple/ /path/to/loca/data/dir`
+`gsutil cp -r gs://ei-notebook-assets/costa_rica/ /path/to/loca/data/dir`
 
 Next, set the LOCAL_DATA_DIR shell variable to the downloaded folder, e.g.
 
-`LOCAL_DATA_DIR=/Users/ben/EarthGenome/data/costa_rica_pineapple`
+`LOCAL_DATA_DIR=/Users/ben/EarthGenome/data/costa_rica`
 
 This location will be referenced throughout this workflow.
 
