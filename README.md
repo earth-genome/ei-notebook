@@ -27,7 +27,7 @@ mamba activate ei-notebook
 mamba install -c conda-forge --file ./requirements_v2.txt -y
 ```
 
-## Piepeline Overview
+## Pipeline Overview
 
 The pipeline consists of several steps:
 
