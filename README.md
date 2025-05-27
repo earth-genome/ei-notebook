@@ -13,6 +13,8 @@ Next, please download the supporting files. These include a pre-generated `annoy
 
 `gsutil cp -r gs://ei-notebook-assets/costa_rica/ /path/to/loca/data/dir`
 
+Assets are available for Costa Rica (Central America), Sumatra (and Java), and West Africa. Please note that West Africa and Sumatra are larger AOIs and have larger associated files, which likely require remotely working in a high-memory virtual machine. The Central America AOI is relatively smaller and may be a better place to begin. 
+
 Next, set the LOCAL_DATA_DIR shell variable to the downloaded folder, e.g.
 
 `LOCAL_DATA_DIR=/Users/ben/EarthGenome/data/costa_rica`
