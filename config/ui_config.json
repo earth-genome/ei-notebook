@@ -1,4 +1,5 @@
 {
+    "_recommendation": "For better portability and to avoid exposing local directory structures, consider using relative paths from the project root or environment variables for 'local_dir'.",
     "local_dir": "/Users/ben/EarthGenome/data/costa_rica_pineapple",
     "mgrs_ids": [
         "17PLL",
