@@ -26,11 +26,22 @@ warnings.simplefilter("ignore", category=FutureWarning)
 
 initialize_ee_with_credentials()
 
+# Get API keys from environment variables
+MAPTILER_API_KEY = os.getenv('MAPTILER_API_KEY')
+if not MAPTILER_API_KEY:
+    MAPTILER_API_KEY = 'YOUR_MAPTILER_API_KEY'
+    warnings.warn("MAPTILER_API_KEY environment variable not set. Using placeholder. Please set it for full functionality.")
+
+MAPBOX_ACCESS_TOKEN = os.getenv('MAPBOX_ACCESS_TOKEN')
+if not MAPBOX_ACCESS_TOKEN:
+    MAPBOX_ACCESS_TOKEN = 'YOUR_MAPBOX_ACCESS_TOKEN'
+    warnings.warn("MAPBOX_ACCESS_TOKEN environment variable not set. Using placeholder. Please set it for full functionality.")
+
 BASEMAP_TILES = {
-    'MAPTILER': "https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=rj16GDKjpYt4x2DmkYns",
+    'MAPTILER': f"https://api.maptiler.com/tiles/satellite-v2/{{z}}/{{x}}/{{y}}.jpg?key={MAPTILER_API_KEY}",
     # 'HUTCH_TILE': 'https://tiles.earthindex.ai/v1/tiles/sentinel2-temporal-mosaics/2023-01-01/2024-01-01/rgb/{z}/{x}/{y}.webp',
     'GOOGLE_HYBRID': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-    'MAPBOX': 'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoiZWFydGhyaXNlIiwiYSI6ImNtMzdud29nZDBqbGwya3B3anhibWY2YzkifQ.KJut6BHa48XZ4MDR_F6Ygw'
+    'MAPBOX': f"https://api.mapbox.com/v4/mapbox.satellite/{{z}}/{{x}}/{{y}}.png?access_token={MAPBOX_ACCESS_TOKEN}"
 }
 
 class EmbeddingMapper:

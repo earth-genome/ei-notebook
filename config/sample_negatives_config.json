@@ -1,4 +1,5 @@
 {
+  "_recommendation": "For better portability and to avoid exposing local directory structures, consider using relative paths from the project root or environment variables for file paths (e.g., 'input.aoi', 'input.positive_points', 'output.filtered_samples').",
   "input": {
     "aoi": "/Users/ben/EarthGenome/code/ei-notebook/places/costa_rica.geojson",
     "positive_points": "/Users/ben/EarthGenome/data/costa_rica_pineapple/positive_labels.parquet"
