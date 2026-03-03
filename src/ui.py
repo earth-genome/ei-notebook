@@ -1,4 +1,4 @@
-"""Map labeling interface and training utility functions for 
+"""Map labeling interface and training utility functions for
 machine learning on top of satellite foundation model embeddings."""
 
 import json
@@ -6,25 +6,16 @@ import os
 import warnings
 from datetime import datetime
 
-
-import ee
 import geopandas as gpd
 import ipyleaflet as ipyl
-from ipyleaflet import Map, Marker, basemaps, CircleMarker, LayerGroup, GeoJSON, DrawControl
+from ipyleaflet import Map, DrawControl, GeoJSON
 from IPython.display import display
-from ipywidgets import Button, FloatSlider, VBox, HBox
-import matplotlib.pyplot as plt
+from ipywidgets import Button, VBox, HBox
 import numpy as np
 import pandas as pd
-import shapely
 from shapely.geometry import Point
-import sklearn.metrics as metrics
-
-from gee import get_s2_hsv_median, get_s2_rgb_median, get_ee_image_url, initialize_ee_with_credentials
 
 warnings.simplefilter("ignore", category=FutureWarning)
-
-initialize_ee_with_credentials()
 
 # Get API keys from environment variables
 MAPTILER_API_KEY = os.getenv('MAPTILER_API_KEY')
@@ -76,59 +67,40 @@ class EmbeddingMapper:
 
 
 class GeoLabeler:
-    """An interactive Leaflet map for labeling geographic features relative to satellite image embedding tiles.
-    
-    Attributes: 
-        gdf: A pandas GeoDataFrame whose columns are embedding feature values and a geometry
-        map: A Leaflet map
-        pos_ids, neg_ids: Lists of dataframe indices associated to pos / neg labeled points
-        pos_layer, neg_layer, erase_layer, points: Leaflet map layers 
-        select_val: 1/0/-100/2 to indicate pos/neg/erase/google maps label action
-        execute_lable_point: Boolean flag for label_point() execution on map interaction
-    
-    External method: 
-        update_layer: Add points to the map for visualization, without changing labels.
-    
+    """Interactive Leaflet map for labeling geographic features relative to
+    satellite image embedding tiles.
+
+    Attributes:
+        gdf: GeoDataFrame (centroids or full embedding rows) with geometry
+        map: Leaflet map
+        pos_ids, neg_ids: Lists of dataframe indices for pos/neg labeled points
+        pos_layer, neg_layer, erase_layer, points: Map layers
+        select_val: 1/0/-100/2 for pos/neg/erase/Google Maps
+        detection_gdf: Optional; set by notebook for lasso selection over search results
     """
+
     def __init__(
-            self, gdf, geojson_path, mgrs_ids, start_date, end_date, imagery,
-            annoy_index, duckdb_connection, baselayer_url=BASEMAP_TILES['MAPTILER'], **kwargs):
+            self, gdf, geojson_path, baselayer_url=None, **kwargs):
+        if baselayer_url is None:
+            baselayer_url = BASEMAP_TILES['MAPTILER']
         print("Initializing GeoLabeler...")
         self.gdf = gdf.copy()
-        self.annoy_index = annoy_index
-        self.duckdb_connection = duckdb_connection
-        self.current_basemap = 'MAPTILER'
-        self.basemap_layer = ipyl.TileLayer(url=baselayer_url, no_wrap=True, name='basemap', 
-                                       attribution=kwargs.get('attribution'))
-        self.ee_boundary = ee.Geometry(shapely.geometry.mapping(
-            gpd.read_file(geojson_path).geometry.iloc[0]))
-        
+        # Match current basemap to BASEMAP_TILES or add custom URL
+        try:
+            self.current_basemap = next(
+                k for k, v in BASEMAP_TILES.items() if v == baselayer_url
+            )
+        except StopIteration:
+            BASEMAP_TILES['CUSTOM'] = baselayer_url
+            self.current_basemap = 'CUSTOM'
+        self.basemap_layer = ipyl.TileLayer(
+            url=baselayer_url, no_wrap=True, name='basemap',
+            attribution=kwargs.get('attribution'))
         cen = gdf.geometry.unary_union.centroid
         self.map = Map(
             basemap=self.basemap_layer,
-            center=(cen.y, cen.x), zoom=7, layout={'height':'600px'},
+            center=(cen.y, cen.x), zoom=7, layout={'height': '600px'},
             scroll_wheel_zoom=True)
-
-        hsv_median = get_s2_hsv_median(
-            self.ee_boundary, start_date, end_date)
-
-        hsv_url = get_ee_image_url(hsv_median, {
-            'min': [0, 0, 0],
-            'max': [1, 1, 1],
-            'bands': ['hue', 'saturation', 'value']
-        })
-        BASEMAP_TILES['HSV_MEDIAN'] = hsv_url
-
-        rgb_median = get_s2_rgb_median(
-        self.ee_boundary, start_date, end_date, scale_factor=10000)
-
-        rgb_url = get_ee_image_url(rgb_median, {
-            'min': [0, 0, 0],
-            'max': [0.25, 0.25, 0.25],
-            'bands': ['B4', 'B3', 'B2']
-        })
-        BASEMAP_TILES['RGB_MEDIAN'] = rgb_url
-
 
         print("Adding controls...")
         self.pos_button = Button(description='Positive')
@@ -147,8 +119,7 @@ class GeoLabeler:
         self.save_button.on_click(self.save_dataset)
         self.map.on_interaction(self.label_point)
         self.execute_label_point = True
-        self.mgrs_ids = mgrs_ids
-        self.select_val = -100 # Initialize to _erase_
+        self.select_val = -100  # Initialize to _erase_
         self.pos_ids = []
         self.neg_ids = []
         self.detection_gdf = None
@@ -386,11 +357,52 @@ class GeoLabeler:
         layer.data = new_data
         self.execute_label_point = True
 
-    def get_embeddings_by_tile_ids(self, tile_ids):
-        """Get all embedding columns for given tile IDs from DuckDB."""
-        query = f"""
-        SELECT *
-        FROM embeddings 
-        WHERE tile_id IN ({','.join([f"'{tid}'" for tid in tile_ids])})
-        """
-        return self.duckdb_connection.execute(query).df()   
+
+def get_embeddings_by_tile_ids(connection, tile_ids, table_name='embeddings'):
+    """Fetch embedding rows for given tile IDs from a DuckDB connection.
+
+    Use this in the notebook after getting pos/neg from the labeler, e.g.:
+        pos_embeddings = get_embeddings_by_tile_ids(embeddings_con, pos['tile_id'].values)
+    """
+    if len(tile_ids) == 0:
+        return connection.execute(f"SELECT * FROM {table_name} LIMIT 0").df()
+    placeholders = ','.join([f"'{tid}'" for tid in tile_ids])
+    query = f"SELECT * FROM {table_name} WHERE tile_id IN ({placeholders})"
+    return connection.execute(query).df()
+
+
+def add_ee_basemaps(labeler, geojson_path, start_date, end_date):
+    """Add Earth Engine HSV and RGB median basemaps to BASEMAP_TILES and optionally
+    switch the labeler to the first one. Call this only if you want EE basemaps;
+    it triggers EE initialization and authentication.
+
+    Usage:
+        labeler = GeoLabeler(gdf, geojson_path, ...)
+        add_ee_basemaps(labeler, geojson_path, start_date, end_date)  # optional
+    """
+    import shapely
+    import ee
+    from gee import (
+        get_s2_hsv_median,
+        get_s2_rgb_median,
+        get_ee_image_url,
+        initialize_ee_with_credentials,
+    )
+    initialize_ee_with_credentials()
+    boundary = gpd.read_file(geojson_path).geometry.iloc[0]
+    ee_boundary = ee.Geometry(shapely.geometry.mapping(boundary))
+    hsv_median = get_s2_hsv_median(ee_boundary, start_date, end_date)
+    hsv_url = get_ee_image_url(hsv_median, {
+        'min': [0, 0, 0], 'max': [1, 1, 1],
+        'bands': ['hue', 'saturation', 'value']})
+    BASEMAP_TILES['HSV_MEDIAN'] = hsv_url
+    rgb_median = get_s2_rgb_median(
+        ee_boundary, start_date, end_date, scale_factor=10000)
+    rgb_url = get_ee_image_url(rgb_median, {
+        'min': [0, 0, 0], 'max': [0.25, 0.25, 0.25],
+        'bands': ['B4', 'B3', 'B2']})
+    BASEMAP_TILES['RGB_MEDIAN'] = rgb_url
+    # Optionally switch labeler to first EE basemap
+    labeler.basemap_layer.url = hsv_url
+    labeler.current_basemap = 'HSV_MEDIAN'
+    labeler.toggle_basemap_button.description = f'Basemap: {labeler.current_basemap}'
