@@ -5,6 +5,7 @@ import json
 import os
 import warnings
 from datetime import datetime
+from pathlib import Path
 
 import geopandas as gpd
 import ipyleaflet as ipyl
@@ -31,7 +32,6 @@ if not MAPBOX_ACCESS_TOKEN:
 
 BASEMAP_TILES = {
     'MAPTILER': f"https://api.maptiler.com/tiles/satellite-v2/{{z}}/{{x}}/{{y}}.jpg?key={MAPTILER_API_KEY}",
-    # 'HUTCH_TILE': 'https://tiles.earthindex.ai/v1/tiles/sentinel2-temporal-mosaics/2023-01-01/2024-01-01/rgb/{z}/{x}/{y}.webp',
     'GOOGLE_HYBRID': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
     'MAPBOX': f"https://api.mapbox.com/v4/mapbox.satellite/{{z}}/{{x}}/{{y}}.png?access_token={MAPBOX_ACCESS_TOKEN}"
 }
@@ -43,6 +43,7 @@ class GeoLabeler:
     Attributes:
         gdf: GeoDataFrame (centroids or full embedding rows) with geometry
         map: Leaflet map
+        save_dir: Optional path; Save Dataset button writes GeoJSON files here (default: cwd)
         pos_ids, neg_ids: Lists of dataframe indices for pos/neg labeled points
         pos_layer, neg_layer, erase_layer, points: Map layers
         select_val: 1/0/-100/2 for pos/neg/erase/Google Maps
@@ -50,11 +51,13 @@ class GeoLabeler:
     """
 
     def __init__(
-            self, gdf, geojson_path, baselayer_url=None, **kwargs):
+            self, gdf, geojson_path, baselayer_url=None, save_dir=None, **kwargs):
         if baselayer_url is None:
-            baselayer_url = BASEMAP_TILES['MAPTILER']
+            baselayer_url = BASEMAP_TILES['GOOGLE_HYBRID']
         print("Initializing GeoLabeler...")
         self.gdf = gdf.copy()
+        self.save_dir = Path(save_dir) if save_dir else Path.cwd()
+        self.save_dir.mkdir(parents=True, exist_ok=True)
         # Match current basemap to BASEMAP_TILES or add custom URL
         try:
             self.current_basemap = next(
@@ -95,18 +98,24 @@ class GeoLabeler:
         self.detection_gdf = None
         self.lasso_mode = False
         
-        with open(geojson_path) as f:
-            region_layer = ipyl.GeoJSON(
-                    name="region",
-                    data=json.load(f),
-                    style={
-                        'color': '#FAFAFA',
-                        'opacity': 1,
-                        'fillOpacity': 0,
-                        'weight': 1
-                    }
-                )
+        geojson_path_str = geojson_path if isinstance(geojson_path, (str, bytes)) else str(geojson_path)
+        with open(geojson_path_str) as f:
+            region_data = json.load(f)
+        region_layer = ipyl.GeoJSON(
+            name="region",
+            data=region_data,
+            style={
+                'color': '#FFFFFF',
+                'weight': 2,
+                'opacity': 1,
+                'fillOpacity': 0,
+            },
+        )
         self.map.add_layer(region_layer)
+        # Fit initial viewport to the boundary GeoJSON
+        boundary_gdf = gpd.read_file(geojson_path_str)
+        (minx, miny, maxx, maxy) = boundary_gdf.total_bounds
+        self.map.fit_bounds([[miny, minx], [maxy, maxx]])
 
 
         # layer to contain positive labeled points
@@ -238,20 +247,22 @@ class GeoLabeler:
 
     def save_dataset(self, b):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
         # Save positive points
         if self.pos_ids:
             pos_gdf = self.gdf.loc[self.pos_ids][["geometry"]]
-            pos_gdf.to_file(f"positive_points_{timestamp}.geojson", driver="GeoJSON")
-            print(f"Saved positive points to positive_points_{timestamp}.geojson")
+            path = self.save_dir / f"positive_points_{timestamp}.geojson"
+            pos_gdf.to_file(path, driver="GeoJSON")
+            print(f"Saved positive points to {path}")
         else:
             print("No positive points to save")
-            
+
         # Save negative points
         if self.neg_ids:
             neg_gdf = self.gdf.loc[self.neg_ids][["geometry"]]
-            neg_gdf.to_file(f"negative_points_{timestamp}.geojson", driver="GeoJSON")
-            print(f"Saved negative points to negative_points_{timestamp}.geojson")
+            path = self.save_dir / f"negative_points_{timestamp}.geojson"
+            neg_gdf.to_file(path, driver="GeoJSON")
+            print(f"Saved negative points to {path}")
         else:
             print("No negative points to save")
 
