@@ -7,12 +7,16 @@ to the store.
 
 Helpers: from_parquet() splits a combined parquet into centroid gdf +
 InMemoryVectorStore; from_duckdb() builds an EmbeddingMapper from a centroid
-gdf and DuckDB connection.
+gdf and DuckDB connection. get_annoy_index() loads an Annoy index from disk or
+builds it from vectors and saves.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol, Union
+
+from annoy import AnnoyIndex
 
 import geopandas as gpd
 import numpy as np
@@ -184,3 +188,42 @@ def from_dataframe(
     vectors_df = gdf[embedding_cols].copy()
     vectors_df.index = centroid_gdf.index
     return EmbeddingMapper(centroid_gdf, InMemoryVectorStore(vectors_df))
+
+
+def get_annoy_index(
+    path: Union[str, Path],
+    dim: int,
+    *,
+    vectors: Union[np.ndarray, pd.DataFrame, None] = None,
+    n_trees: int = 10,
+    metric: str = "angular",
+):
+    """Load Annoy index from path if it exists; otherwise build from vectors and save.
+
+    path: Path to .ann file.
+    dim: Embedding dimension (required for load and build).
+    vectors: If provided and path does not exist, build index from these (shape (n, dim)).
+    n_trees: Number of trees when building (default 10).
+    metric: 'angular' or 'euclidean' (default 'angular').
+
+    Returns:
+        AnnoyIndex instance (loaded or newly built). Item ids in the built index
+        are 0..n-1 corresponding to the rows of vectors.
+    """
+    path = Path(path)
+    if path.exists():
+        idx = AnnoyIndex(dim, metric)
+        idx.load(str(path))
+        return idx
+    if vectors is not None:
+        arr = np.asarray(vectors, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] != dim:
+            raise ValueError(f"vectors must have shape (n, {dim}), got {getattr(arr, 'shape', '?')}")
+        idx = AnnoyIndex(dim, metric)
+        for i, row in enumerate(arr):
+            idx.add_item(i, row)
+        idx.build(n_trees)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        idx.save(str(path))
+        return idx
+    raise FileNotFoundError(f"Annoy index not found at {path} and no vectors provided to build.")
