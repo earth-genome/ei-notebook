@@ -256,7 +256,12 @@ class GeoLabeler:
             self.current_basemap, self._custom_attribution or '')
         self.toggle_basemap_button.description = f'Basemap: {self.current_basemap}'
 
-    def save_dataset(self, b):
+    def save_dataset(self, b=None):
+        """Save positive and negative points to GeoJSON in save_dir.
+
+        Call from the UI via the Save Dataset button (b is the button) or from the
+        notebook as labeler.save_dataset().
+        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Save positive points
