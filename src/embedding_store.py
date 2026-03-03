@@ -96,6 +96,11 @@ class EmbeddingMapper:
         self.sindex = self.gdf.sindex
         self._store = vector_store
 
+    @property
+    def id_column(self) -> str | None:
+        """Name of the id/tile column (same as gdf.index.name). Use for predict_df, get_detections output, detections_to_rectpolys."""
+        return self.gdf.index.name
+
     def map_points(self, df: gpd.GeoDataFrame) -> pd.Series:
         """Map geometry to nearest centroid. Returns Series of ids, index = df.index."""
         nearest_idxs = self.sindex.nearest(df.geometry, return_all=False)[1]
@@ -131,8 +136,10 @@ def from_parquet(
     centroid_gdf = gdf[[geometry_col]].copy()
     if id_col and id_col in gdf.columns:
         centroid_gdf.index = gdf[id_col].values
+        centroid_gdf.index.name = id_col
     else:
         centroid_gdf.index = np.arange(len(gdf))
+        centroid_gdf.index.name = "tile_id"  # ordinal ids; same name as DuckDB path for ml_utils
     vectors_df = gdf[embedding_cols].copy()
     vectors_df.index = centroid_gdf.index
     store = InMemoryVectorStore(vectors_df)
@@ -183,8 +190,10 @@ def from_dataframe(
     centroid_gdf = gdf[[geometry_col]].copy()
     if id_col and id_col in gdf.columns:
         centroid_gdf.index = gdf[id_col].values
+        centroid_gdf.index.name = id_col
     else:
         centroid_gdf.index = np.arange(len(gdf))
+        centroid_gdf.index.name = "tile_id"  # ordinal ids; same name as DuckDB path for ml_utils
     vectors_df = gdf[embedding_cols].copy()
     vectors_df.index = centroid_gdf.index
     return EmbeddingMapper(centroid_gdf, InMemoryVectorStore(vectors_df))
