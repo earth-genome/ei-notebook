@@ -11,9 +11,10 @@ import ipyleaflet as ipyl
 from ipyleaflet import Map, DrawControl, GeoJSON
 from IPython.display import display
 from ipywidgets import Button, VBox, HBox
-import numpy as np
 import pandas as pd
 from shapely.geometry import Point
+
+from embedding_store import EmbeddingMapper
 
 warnings.simplefilter("ignore", category=FutureWarning)
 
@@ -34,37 +35,6 @@ BASEMAP_TILES = {
     'GOOGLE_HYBRID': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
     'MAPBOX': f"https://api.mapbox.com/v4/mapbox.satellite/{{z}}/{{x}}/{{y}}.png?access_token={MAPBOX_ACCESS_TOKEN}"
 }
-
-class EmbeddingMapper:
-    """Map between geographic points and georeferenced satellite image embeddings.
-    
-    Attributes:
-        gdf: A pandas GeoDataFrame whose columns are embedding feature values and a geometry
-        sindex: gdf.sindex
-    
-    Methods: 
-        map_points: Map geometric points to a nearest entry in the embedding dataframe.
-        get_vectors: Pull feature vectors from embedding dataframe.
-    """
-    
-    def __init__(self, gdf):
-        
-        self.gdf = gdf
-        self.gdf.index = np.arange(len(self.gdf))
-        self.sindex = self.gdf.sindex 
-        
-    def map_points(self, df):
-        """Map geometric points to a nearest entry in the embedding dataframe.
-        
-        Arguments:
-            df: A GeoDataFrame with Point entries
-        """
-        return pd.Index(self.sindex.nearest(df.geometry, return_all=False)[1])
-    
-    def get_vectors(self, idx):
-        """Pull feature vectors from embedding dataframe."""
-        return self.gdf.loc[idx].drop(columns=['geometry'])
-
 
 class GeoLabeler:
     """Interactive Leaflet map for labeling geographic features relative to
