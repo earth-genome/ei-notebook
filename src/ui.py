@@ -11,7 +11,7 @@ import geopandas as gpd
 import ipyleaflet as ipyl
 from ipyleaflet import Map, DrawControl, GeoJSON
 from IPython.display import display
-from ipywidgets import Button, VBox, HBox
+from ipywidgets import Button, HTML, Layout, VBox, HBox
 import pandas as pd
 from shapely.geometry import Point
 
@@ -39,7 +39,7 @@ BASEMAP_TILES = {
 # Default attributions for BASEMAP_TILES; used when that layer is active. Custom layers use attribution= passed to GeoLabeler.
 BASEMAP_ATTRIBUTIONS = {
     'MAPTILER': '<a href="https://www.maptiler.com/copyright/" target="_blank">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
-    'GOOGLE_HYBRID': 'Imagery © Airbus, CNES / Airbus, Landsat / Copernicus, Maxar Technologies; Map data © Google',
+    'GOOGLE_HYBRID': '© Airbus, Landsat, Copernicus, Maxar; Map data © Google',
     'MAPBOX': '<a href="https://www.mapbox.com/" target="_blank">&copy; Mapbox</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
 }
 
@@ -74,15 +74,20 @@ class GeoLabeler:
             BASEMAP_TILES['CUSTOM'] = baselayer_url
             self.current_basemap = 'CUSTOM'
         self._custom_attribution = kwargs.get('attribution')  # for custom baselayer_url only
-        attribution = BASEMAP_ATTRIBUTIONS.get(self.current_basemap) or self._custom_attribution
+        attribution = BASEMAP_ATTRIBUTIONS.get(self.current_basemap) or self._custom_attribution or ''
         self.basemap_layer = ipyl.TileLayer(
             url=baselayer_url, no_wrap=True, name='basemap',
-            attribution=attribution or '')
+            attribution=attribution)
         cen = gdf.geometry.unary_union.centroid
         self.map = Map(
             basemap=self.basemap_layer,
             center=(cen.y, cen.x), zoom=7, layout={'height': '600px'},
-            scroll_wheel_zoom=True)
+            scroll_wheel_zoom=True, attribution_control=True)
+        # Ensure attribution is visible (TileLayer attribution can be missed by the default control)
+        self._attribution_html = HTML(
+            value=f'<div style="font-size: 10px; color: #333;">{attribution}</div>',
+            layout=Layout(margin='0', padding='2px 4px'))
+        self.map.add(ipyl.WidgetControl(widget=self._attribution_html, position='bottomright'))
 
         print("Adding controls...")
         self.pos_button = Button(description='Positive')
@@ -252,8 +257,9 @@ class GeoLabeler:
 
         # Update basemap layer URL and attribution for the selected tile
         self.basemap_layer.url = BASEMAP_TILES[self.current_basemap]
-        self.basemap_layer.attribution = BASEMAP_ATTRIBUTIONS.get(
-            self.current_basemap, self._custom_attribution or '')
+        attr = BASEMAP_ATTRIBUTIONS.get(self.current_basemap, self._custom_attribution or '')
+        self.basemap_layer.attribution = attr
+        self._attribution_html.value = f'<div style="font-size: 10px; color: #333;">{attr}</div>'
         self.toggle_basemap_button.description = f'Basemap: {self.current_basemap}'
 
     def save_dataset(self, b=None):
