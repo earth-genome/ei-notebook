@@ -36,6 +36,13 @@ BASEMAP_TILES = {
     'MAPBOX': f"https://api.mapbox.com/v4/mapbox.satellite/{{z}}/{{x}}/{{y}}.png?access_token={MAPBOX_ACCESS_TOKEN}"
 }
 
+# Default attributions for BASEMAP_TILES; used when that layer is active. Custom layers use attribution= passed to GeoLabeler.
+BASEMAP_ATTRIBUTIONS = {
+    'MAPTILER': '<a href="https://www.maptiler.com/copyright/" target="_blank">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
+    'GOOGLE_HYBRID': 'Imagery © Airbus, CNES / Airbus, Landsat / Copernicus, Maxar Technologies; Map data © Google',
+    'MAPBOX': '<a href="https://www.mapbox.com/" target="_blank">&copy; Mapbox</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
+}
+
 class GeoLabeler:
     """Interactive Leaflet map for labeling geographic features relative to
     satellite image embedding tiles.
@@ -66,9 +73,11 @@ class GeoLabeler:
         except StopIteration:
             BASEMAP_TILES['CUSTOM'] = baselayer_url
             self.current_basemap = 'CUSTOM'
+        self._custom_attribution = kwargs.get('attribution')  # for custom baselayer_url only
+        attribution = BASEMAP_ATTRIBUTIONS.get(self.current_basemap) or self._custom_attribution
         self.basemap_layer = ipyl.TileLayer(
             url=baselayer_url, no_wrap=True, name='basemap',
-            attribution=kwargs.get('attribution'))
+            attribution=attribution or '')
         cen = gdf.geometry.unary_union.centroid
         self.map = Map(
             basemap=self.basemap_layer,
@@ -240,9 +249,11 @@ class GeoLabeler:
         current_idx = basemap_keys.index(self.current_basemap)
         next_idx = (current_idx + 1) % len(basemap_keys)
         self.current_basemap = basemap_keys[next_idx]
-        
-        # Update basemap layer
+
+        # Update basemap layer URL and attribution for the selected tile
         self.basemap_layer.url = BASEMAP_TILES[self.current_basemap]
+        self.basemap_layer.attribution = BASEMAP_ATTRIBUTIONS.get(
+            self.current_basemap, self._custom_attribution or '')
         self.toggle_basemap_button.description = f'Basemap: {self.current_basemap}'
 
     def save_dataset(self, b):
