@@ -115,37 +115,25 @@ class EmbeddingMapper:
 
 
 def from_parquet(
-    path: str,
+    path: Union[str, Path],
     geometry_col: str = "geometry",
     id_col: str | None = None,
     embedding_cols: list[str] | None = None,
     return_mapper: bool = True,
 ) -> Union[tuple[gpd.GeoDataFrame, InMemoryVectorStore], EmbeddingMapper]:
-    """Split a parquet (centroids + embeddings) into centroid gdf and vector store.
+    """Load a parquet (centroids + embeddings) and return mapper or (gdf, store).
 
-    If id_col is None, uses integer index 0..n-1. embedding_cols defaults to
-    all columns except geometry and id_col. If return_mapper is True, returns
-    an EmbeddingMapper; else returns (centroid_gdf, InMemoryVectorStore).
+    Delegates to from_dataframe after gpd.read_parquet(path). If return_mapper
+    is True, returns an EmbeddingMapper; else returns (centroid_gdf, InMemoryVectorStore).
     """
     gdf = gpd.read_parquet(path)
-    if geometry_col not in gdf.columns:
-        raise ValueError(f"Geometry column '{geometry_col}' not in parquet columns")
-    if embedding_cols is None:
-        exclude = {geometry_col} | ({id_col} if id_col else set())
-        embedding_cols = [c for c in gdf.columns if c not in exclude]
-    centroid_gdf = gdf[[geometry_col]].copy()
-    if id_col and id_col in gdf.columns:
-        centroid_gdf.index = gdf[id_col].values
-        centroid_gdf.index.name = id_col
-    else:
-        centroid_gdf.index = np.arange(len(gdf))
-        centroid_gdf.index.name = "tile_id"  # ordinal ids; same name as DuckDB path for ml_utils
-    vectors_df = gdf[embedding_cols].copy()
-    vectors_df.index = centroid_gdf.index
-    store = InMemoryVectorStore(vectors_df)
-    if return_mapper:
-        return EmbeddingMapper(centroid_gdf, store)
-    return centroid_gdf, store
+    return from_dataframe(
+        gdf,
+        geometry_col=geometry_col,
+        id_col=id_col,
+        embedding_cols=embedding_cols,
+        return_mapper=return_mapper,
+    )
 
 
 def from_duckdb(
@@ -176,11 +164,13 @@ def from_dataframe(
     geometry_col: str = "geometry",
     id_col: str | None = None,
     embedding_cols: list[str] | None = None,
-) -> EmbeddingMapper:
-    """Build an EmbeddingMapper from a single GeoDataFrame (centroids + embeddings in memory).
+    return_mapper: bool = True,
+) -> Union[tuple[gpd.GeoDataFrame, InMemoryVectorStore], EmbeddingMapper]:
+    """Build an EmbeddingMapper (or centroid gdf + store) from a GeoDataFrame.
 
-    Splits into centroid gdf and InMemoryVectorStore. Same semantics as
-    from_parquet; use when you already have the DataFrame loaded.
+    Splits into centroid gdf and InMemoryVectorStore. If id_col is None, uses
+    integer index 0..n-1 with index.name = 'tile_id'. If return_mapper is False,
+    returns (centroid_gdf, InMemoryVectorStore); otherwise returns EmbeddingMapper.
     """
     if geometry_col not in gdf.columns:
         raise ValueError(f"Geometry column '{geometry_col}' not in DataFrame")
@@ -193,10 +183,13 @@ def from_dataframe(
         centroid_gdf.index.name = id_col
     else:
         centroid_gdf.index = np.arange(len(gdf))
-        centroid_gdf.index.name = "tile_id"  # ordinal ids; same name as DuckDB path for ml_utils
+        centroid_gdf.index.name = "tile_id"  # ordinal ids
     vectors_df = gdf[embedding_cols].copy()
     vectors_df.index = centroid_gdf.index
-    return EmbeddingMapper(centroid_gdf, InMemoryVectorStore(vectors_df))
+    store = InMemoryVectorStore(vectors_df)
+    if return_mapper:
+        return EmbeddingMapper(centroid_gdf, store)
+    return centroid_gdf, store
 
 
 def get_annoy_index(
