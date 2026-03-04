@@ -207,6 +207,7 @@ def get_annoy_index(
     path: Path to .ann file.
     dim: Embedding dimension (required for load and build).
     vectors: If provided and path does not exist, build index from these (shape (n, dim)).
+        If a DataFrame, only numeric columns are used so id/tile_id columns are excluded.
     n_trees: Number of trees when building (default 10).
     metric: 'angular' or 'euclidean' (default 'angular').
 
@@ -220,9 +221,13 @@ def get_annoy_index(
         idx.load(str(path))
         return idx
     if vectors is not None:
+        if hasattr(vectors, "select_dtypes"):
+            vectors = vectors.select_dtypes(include=[np.number])
         arr = np.asarray(vectors, dtype=np.float32)
         if arr.ndim != 2 or arr.shape[1] != dim:
-            raise ValueError(f"vectors must have shape (n, {dim}), got {getattr(arr, 'shape', '?')}")
+            raise ValueError(
+                f"vectors must have shape (n, {dim}), got {getattr(arr, 'shape', '?')}"
+            )
         idx = AnnoyIndex(dim, metric)
         for i, row in enumerate(arr):
             idx.add_item(i, row)
