@@ -168,7 +168,8 @@ def from_dataframe(
 ) -> Union[tuple[gpd.GeoDataFrame, InMemoryVectorStore], EmbeddingMapper]:
     """Build an EmbeddingMapper (or centroid gdf + store) from a GeoDataFrame.
 
-    Splits into centroid gdf and InMemoryVectorStore. If id_col is None, uses
+    Geometry is converted to centroids (points); if already points, unchanged.
+    If id_col is None, uses
     integer index 0..n-1 with index.name = 'tile_id'. If return_mapper is False,
     returns (centroid_gdf, InMemoryVectorStore); otherwise returns EmbeddingMapper.
     """
@@ -178,6 +179,7 @@ def from_dataframe(
         exclude = {geometry_col} | ({id_col} if id_col else set())
         embedding_cols = [c for c in gdf.columns if c not in exclude]
     centroid_gdf = gdf[[geometry_col]].copy()
+    centroid_gdf[geometry_col] = centroid_gdf[geometry_col].centroid
     if id_col and id_col in gdf.columns:
         centroid_gdf.index = gdf[id_col].values
         centroid_gdf.index.name = id_col
