@@ -36,13 +36,8 @@ def predict(X, model, threshold):
 
 
 def predict_df(df, embeddings, model, threshold=1):
-    """Run model inference on a dataframe of labeled geographic points.
-
-    Uses embeddings.id_column (gdf.index.name) to get ids from df; no need to pass
-    tile_id_col. from_parquet/from_dataframe/from_duckdb always set id_column.
-    """
-    id_col = embeddings.id_column
-    tile_ids = df[id_col]
+    """Run model inference on a dataframe of labeled geographic points."""
+    tile_ids = df[embeddings.id_column]
     X = embeddings.get_vectors(tile_ids)
     return predict(X, model, threshold)
 
@@ -68,7 +63,7 @@ def f1_curve(y_true, probs, thresholds=np.arange(0, 1.025, 0.025)):
         metrics.f1_score(y_true, (probs >= t).astype(int)) for t in thresholds
     ]
     fig, ax = plt.subplots()
-    ax.plot(thresholds, f1s, label="Patchwise")
+    ax.plot(thresholds, f1s)
     ax.set_xlabel("Threshold")
     ax.set_ylabel("F1 score")
     ax.legend(loc="lower left")
@@ -79,7 +74,7 @@ def prec_rec_curve(y_true, probs, annotate_thresholds=False):
     """Compute precision-recall curve."""
     prec, rec, thresholds = metrics.precision_recall_curve(y_true, probs)
     fig, ax = plt.subplots()
-    ax.plot(rec, prec, label="Patchwise")
+    ax.plot(rec, prec)
     if annotate_thresholds:
         step = max(1, len(thresholds) // 20)
         for x, y, txt in zip(rec[::step], prec[::step], thresholds[::step]):
@@ -142,7 +137,7 @@ def get_detections(embeddings, model, threshold, boundary_path=None, batch_size=
 def detections_to_rectpolys(
     embeddings,
     detections,
-    half_width=160,
+    patch_width=320,
     buffer_width=0.00001,
     confidence_measure="probability",
 ):
@@ -157,9 +152,9 @@ def detections_to_rectpolys(
     zone = int((first_point.x + 180) / 6) + 1
     epsg = 32600 + zone if first_point.y >= 0 else 32700 + zone
     centroids_utm = centroids.geometry.to_crs(f"EPSG:{epsg}")
-    boxes = centroids_utm.buffer(half_width, cap_style=3)
+    boxes = centroids_utm.buffer(int(patch_width / 2), cap_style=3)
     boxes = gpd.GeoSeries(boxes).set_crs(f"EPSG:{epsg}").to_crs("EPSG:4326")
-    merged = boxes.buffer(buffer_width, join_style=2).unary_union
+    merged = boxes.buffer(buffer_width, join_style=2).union_all()
     polys = gpd.GeoDataFrame(geometry=[merged]).explode(index_parts=False)
     polys = polys.buffer(-buffer_width, join_style=2)
     polys = gpd.GeoDataFrame(geometry=polys).set_crs("EPSG:4326")
