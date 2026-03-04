@@ -1,27 +1,27 @@
 """Build DuckDB database and a centroids GeoDataFrame from multiple embeddings
-parquet files. Outputs match embedding_store.from_duckdb() usage (id_column
-default 'tile_id'). If a parquet has no id column, one is created as global
-integer ordinals consistent with embedding_store's ordinal-id pattern."""
+parquet files.
+
+Requires an id column (default "tile_id") in all parquets to deduplicate
+embeddings across overlapping regions. Geometry column is configurable via
+--geometry_col (default "geometry").
+"""
 
 import argparse
 import gc
 
 import duckdb
 import geopandas as gpd
-import numpy as np
 import pandas as pd
 import psutil
 from tqdm import tqdm
 
-
-def print_mem_usage(note=""):
+def print_mem_usage(note=''):
     mem = psutil.virtual_memory()
     print(
         f"{note}: Memory usage: {mem.percent}% used, "
         f"{mem.available / (1024**3):.2f} GiB available"
     )
-
-
+    
 def main(
     parquet_paths,
     clip_path=None,
@@ -33,29 +33,33 @@ def main(
 ):
     """Create DuckDB table and centroids parquet for out-of-memory embeddings ML.
 
-    If a parquet has no id_col, creates one as globally unique integer ordinals
-    (0, 1, 2, ... across all files), consistent with embedding_store when
-    id_col is not provided.
+    id_col must be present in all parquets; it is used to deduplicate across
+    overlapping regions. geometry_col names the geometry column (default
+    "geometry").
     """
     con = duckdb.connect(db_path)
     seen_tile_ids = set()
     centroid_dfs = []
-    next_id = 0
     print_mem_usage("Start")
 
     for parquet_path in tqdm(parquet_paths):
         gdf = gpd.read_parquet(parquet_path)
         print_mem_usage("GDF loaded")
 
+        if id_col not in gdf.columns:
+            raise ValueError(
+                f"id column '{id_col}' not in {parquet_path}. "
+                "All parquets must have the id column for deduplication."
+            )
+        if geometry_col not in gdf.columns:
+            raise ValueError(
+                f"geometry column '{geometry_col}' not in {parquet_path}."
+            )
+
         if clip_path:
             boundary = gpd.read_file(clip_path)
             gdf = gpd.clip(gdf, boundary)
         gdf = gdf.reset_index(drop=True)
-
-        # Create id column if missing (global ordinal, same pattern as embedding_store)
-        if id_col not in gdf.columns:
-            gdf[id_col] = next_id + np.arange(len(gdf), dtype=np.int64)
-            next_id += len(gdf)
 
         # Deduplicate within and across parquets
         gdf = gdf.drop_duplicates(subset=id_col)
@@ -72,16 +76,16 @@ def main(
         del gdf
         gc.collect()
 
-    pd.concat(centroid_dfs, ignore_index=True).to_parquet(centroids_path, index=False)
-
+    pd.concat(centroid_dfs, ignore_index=True).to_parquet(
+        centroids_path, index=False
+    )
+    
     result = con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
     print(f"Inserted {result[0]} rows into {table_name}.")
     sample = con.execute(
-        f"SELECT * FROM {table_name} USING SAMPLE 2 ROWS"
-    ).fetchdf()
+        f"SELECT * FROM {table_name} USING SAMPLE 2 ROWS").fetchdf()
     print(f"Sample rows:\n{sample}")
     con.close()
-
 
 def update_duck_db(con, gdf, table_name="embeddings", geometry_col="geometry"):
     """Write chunk of embeddings GeoDataFrame to DuckDB (no geometry column)."""
@@ -93,8 +97,7 @@ def update_duck_db(con, gdf, table_name="embeddings", geometry_col="geometry"):
     con.execute(f"INSERT INTO {table_name} SELECT * FROM df")
     con.unregister("df")
     del df
-
-
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Build embeddings.db and centroids parquet from embedding parquets."
@@ -133,7 +136,7 @@ if __name__ == "__main__":
         "--id_col",
         type=str,
         default="tile_id",
-        help="Id column name. If missing in a parquet, created as global integer ordinals.",
+        help="Id column name (must exist in all parquets; used for deduplication).",
     )
     parser.add_argument(
         "--geometry_col",
