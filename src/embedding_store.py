@@ -27,7 +27,11 @@ class VectorStore(Protocol):
     """Protocol for id -> embedding vectors. Rows returned in same order as ids."""
 
     def get_vectors(self, ids: Union[pd.Series, pd.Index, list, np.ndarray]) -> pd.DataFrame:
-        """Return embedding vectors for the given ids. DataFrame has no id column."""
+        """Return embedding vectors for the given ids.
+
+        Returns a DataFrame of numeric embedding columns only (no id column).
+        Row order matches the order of ids.
+        """
         ...
 
 
@@ -65,9 +69,10 @@ class DuckDBVectorStore:
         ids_full = pd.Series(ids) if not isinstance(ids, pd.Series) else ids
         ids_unique = ids_full.unique()
         if len(ids_unique) == 0:
-            return self._con.execute(
+            df = self._con.execute(
                 f"SELECT * FROM {self._table_name} LIMIT 0"
             ).fetchdf()
+            return df.drop(columns=[self._id_column], errors="ignore")
         def _quote(tid):
             if isinstance(tid, str):
                 return f"'{tid}'"
@@ -78,7 +83,9 @@ class DuckDBVectorStore:
             WHERE {self._id_column} IN ({placeholders})
         """
         df = self._con.execute(query).fetchdf()
-        df = df.set_index(self._id_column)
+        ids_from_db = df[self._id_column].values
+        df = df.drop(columns=[self._id_column], errors="ignore")
+        df.index = ids_from_db
         df = df.reindex(ids_full)
         return df.reset_index(drop=True)
 
@@ -117,7 +124,7 @@ class EmbeddingMapper:
 def from_parquet(
     path: Union[str, Path],
     geometry_col: str = "geometry",
-    id_col: str | None = None,
+    id_column: str | None = None,
     embedding_cols: list[str] | None = None,
     return_mapper: bool = True,
 ) -> Union[tuple[gpd.GeoDataFrame, InMemoryVectorStore], EmbeddingMapper]:
@@ -130,7 +137,7 @@ def from_parquet(
     return from_dataframe(
         gdf,
         geometry_col=geometry_col,
-        id_col=id_col,
+        id_column=id_column,
         embedding_cols=embedding_cols,
         return_mapper=return_mapper,
     )
@@ -162,27 +169,27 @@ def from_duckdb(
 def from_dataframe(
     gdf: gpd.GeoDataFrame,
     geometry_col: str = "geometry",
-    id_col: str | None = None,
+    id_column: str | None = None,
     embedding_cols: list[str] | None = None,
     return_mapper: bool = True,
 ) -> Union[tuple[gpd.GeoDataFrame, InMemoryVectorStore], EmbeddingMapper]:
     """Build an EmbeddingMapper (or centroid gdf + store) from a GeoDataFrame.
 
     Geometry is converted to centroids (points); if already points, unchanged.
-    If id_col is None, uses
+    If id_column is None, uses
     integer index 0..n-1 with index.name = 'tile_id'. If return_mapper is False,
     returns (centroid_gdf, InMemoryVectorStore); otherwise returns EmbeddingMapper.
     """
     if geometry_col not in gdf.columns:
         raise ValueError(f"Geometry column '{geometry_col}' not in DataFrame")
     if embedding_cols is None:
-        exclude = {geometry_col} | ({id_col} if id_col else set())
+        exclude = {geometry_col} | ({id_column} if id_column else {"tile_id"})
         embedding_cols = [c for c in gdf.columns if c not in exclude]
     centroid_gdf = gdf[[geometry_col]].copy()
     centroid_gdf[geometry_col] = centroid_gdf[geometry_col].centroid
-    if id_col and id_col in gdf.columns:
-        centroid_gdf.index = gdf[id_col].values
-        centroid_gdf.index.name = id_col
+    if id_column and id_column in gdf.columns:
+        centroid_gdf.index = gdf[id_column].values
+        centroid_gdf.index.name = id_column
     else:
         centroid_gdf.index = np.arange(len(gdf))
         centroid_gdf.index.name = "tile_id"  # ordinal ids
@@ -196,7 +203,7 @@ def from_dataframe(
 
 def get_annoy_index(
     path: Union[str, Path],
-    dim: int,
+    dim: int | None = None,
     *,
     vectors: Union[np.ndarray, pd.DataFrame, None] = None,
     n_trees: int = 10,
@@ -205,9 +212,10 @@ def get_annoy_index(
     """Load Annoy index from path if it exists; otherwise build from vectors and save.
 
     path: Path to .ann file.
-    dim: Embedding dimension (required for load and build).
+    dim: Embedding dimension. Required when loading from path; when building from
+        vectors, inferred from vectors if omitted.
     vectors: If provided and path does not exist, build index from these (shape (n, dim)).
-        If a DataFrame, only numeric columns are used so id/tile_id columns are excluded.
+        Caller must pass embedding-only data (e.g. from get_vectors); no id column.
     n_trees: Number of trees when building (default 10).
     metric: 'angular' or 'euclidean' (default 'angular').
 
@@ -217,16 +225,21 @@ def get_annoy_index(
     """
     path = Path(path)
     if path.exists():
+        if dim is None:
+            raise ValueError("dim is required when loading an existing Annoy index from path")
         idx = AnnoyIndex(dim, metric)
         idx.load(str(path))
         return idx
     if vectors is not None:
-        if hasattr(vectors, "select_dtypes"):
-            vectors = vectors.select_dtypes(include=[np.number])
         arr = np.asarray(vectors, dtype=np.float32)
-        if arr.ndim != 2 or arr.shape[1] != dim:
+        if arr.ndim != 2:
+            raise ValueError(f"vectors must be 2-dimensional, got shape {arr.shape}")
+        inferred_dim = arr.shape[1]
+        if dim is None:
+            dim = inferred_dim
+        elif dim != inferred_dim:
             raise ValueError(
-                f"vectors must have shape (n, {dim}), got {getattr(arr, 'shape', '?')}"
+                f"vectors must have shape (n, {dim}), got {arr.shape}"
             )
         idx = AnnoyIndex(dim, metric)
         for i, row in enumerate(arr):

@@ -66,7 +66,6 @@ def f1_curve(y_true, probs, thresholds=np.arange(0, 1.025, 0.025)):
     ax.plot(thresholds, f1s)
     ax.set_xlabel("Threshold")
     ax.set_ylabel("F1 score")
-    ax.legend(loc="lower left")
     return fig, ax
 
 
@@ -146,8 +145,8 @@ def detections_to_rectpolys(
     detections: GeoDataFrame from get_detections (must have id column and geometry).
     Uses embeddings.id_column to find the id column in detections.
     """
-    id_col = embeddings.id_column
-    centroids = embeddings.gdf.loc[detections[id_col]]
+    id_column = embeddings.id_column
+    centroids = embeddings.gdf.loc[detections[id_column]]
     first_point = centroids.geometry.iloc[0]
     zone = int((first_point.x + 180) / 6) + 1
     epsg = 32600 + zone if first_point.y >= 0 else 32700 + zone

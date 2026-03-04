@@ -28,12 +28,12 @@ def main(
     db_path="embeddings.db",
     table_name="embeddings",
     centroids_path="centroids.parquet",
-    id_col="tile_id",
+    id_column="tile_id",
     geometry_col="geometry",
 ):
     """Create DuckDB table and centroids parquet for out-of-memory embeddings ML.
 
-    id_col must be present in all parquets; it is used to deduplicate across
+    id_column must be present in all parquets; it is used to deduplicate across
     overlapping regions. geometry_col names the geometry column (default
     "geometry").
     """
@@ -46,9 +46,9 @@ def main(
         gdf = gpd.read_parquet(parquet_path)
         print_mem_usage("GDF loaded")
 
-        if id_col not in gdf.columns:
+        if id_column not in gdf.columns:
             raise ValueError(
-                f"id column '{id_col}' not in {parquet_path}. "
+                f"id column '{id_column}' not in {parquet_path}. "
                 "All parquets must have the id column for deduplication."
             )
         if geometry_col not in gdf.columns:
@@ -62,14 +62,14 @@ def main(
         gdf = gdf.reset_index(drop=True)
 
         # Deduplicate within and across parquets
-        gdf = gdf.drop_duplicates(subset=id_col)
-        gdf = gdf[~gdf[id_col].isin(seen_tile_ids)]
-        seen_tile_ids.update(gdf[id_col])
+        gdf = gdf.drop_duplicates(subset=id_column)
+        gdf = gdf[~gdf[id_column].isin(seen_tile_ids)]
+        seen_tile_ids.update(gdf[id_column])
 
         update_duck_db(con, gdf, table_name, geometry_col=geometry_col)
         print_mem_usage("DuckDB updated")
 
-        centroid_gdf = gdf.loc[:, [id_col, geometry_col]].copy()
+        centroid_gdf = gdf.loc[:, [id_column, geometry_col]].copy()
         centroid_gdf[geometry_col] = centroid_gdf[geometry_col].centroid
         centroid_dfs.append(centroid_gdf)
 
@@ -133,7 +133,7 @@ if __name__ == "__main__":
         help="Output centroids parquet path.",
     )
     parser.add_argument(
-        "--id_col",
+        "--id_column",
         type=str,
         default="tile_id",
         help="Id column name (must exist in all parquets; used for deduplication).",
