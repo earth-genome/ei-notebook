@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import sklearn.metrics as metrics
+from shapely.geometry import box
 
 warnings.simplefilter("ignore", category=FutureWarning)
 
@@ -146,16 +147,41 @@ def detections_to_rectpolys(
 
     detections: GeoDataFrame from get_detections (must have id column and geometry).
     Uses embeddings.id_column to find the id column in detections.
+    patch_width: patch size in meters; converted to degrees at the centroid of
+        embeddings.gdf bounds so buffering stays in 4326 and edges align.
     """
     id_column = embeddings.id_column
     gdf = embeddings.gdf
     centroids = gdf[gdf[id_column].isin(detections[id_column])].copy()
-    first_point = centroids.geometry.iloc[0]
-    zone = int((first_point.x + 180) / 6) + 1
-    epsg = 32600 + zone if first_point.y >= 0 else 32700 + zone
-    centroids_utm = centroids.geometry.to_crs(f"EPSG:{epsg}")
-    boxes = centroids_utm.buffer(int(patch_width / 2), cap_style=3)
-    boxes = gpd.GeoSeries(boxes).set_crs(f"EPSG:{epsg}").to_crs("EPSG:4326")
+
+    def meters_to_degrees_half(meters, ref_lon, ref_lat):
+        """Infer half-extent in degrees (lat, lon) for a given half-extent in meters at a reference point (lon, lat)."""
+        # Approx: 1 deg lat ~ 111320 m; 1 deg lon ~ 111320 * cos(lat) m
+        half_m = meters / 2.0
+        lat_rad = math.radians(ref_lat)
+        m_per_deg_lat = 111320.0
+        m_per_deg_lon = 111320.0 * math.cos(lat_rad)
+        half_lat_deg = half_m / m_per_deg_lat
+        half_lon_deg = half_m / m_per_deg_lon
+        return half_lat_deg, half_lon_deg
+
+    # Reference point: centroid of embeddings.gdf bounds (for consistent degree scale)
+    bounds = gdf.total_bounds  # minx, miny, maxx, maxy (lon, lat)
+    ref_lon = (bounds[0] + bounds[2]) / 2.0
+    ref_lat = (bounds[1] + bounds[3]) / 2.0
+    half_lat_deg, half_lon_deg = meters_to_degrees_half(patch_width, ref_lon, ref_lat)
+
+    # Build axis-aligned squares in 4326 (no UTM)
+    def make_box(geom):
+        lon, lat = geom.x, geom.y
+        return box(
+            lon - half_lon_deg,
+            lat - half_lat_deg,
+            lon + half_lon_deg,
+            lat + half_lat_deg,
+        )
+
+    boxes = gpd.GeoSeries(centroids.geometry.apply(make_box), crs="EPSG:4326")
     merged = boxes.buffer(buffer_width, join_style=2).union_all()
     polys = gpd.GeoDataFrame(geometry=[merged]).explode(index_parts=False)
     polys = polys.buffer(-buffer_width, join_style=2)
