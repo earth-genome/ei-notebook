@@ -361,19 +361,6 @@ class GeoLabeler:
         self.execute_label_point = True
 
 
-def get_embeddings_by_tile_ids(connection, tile_ids, table_name='embeddings'):
-    """Fetch embedding rows for given tile IDs from a DuckDB connection.
-
-    Use this in the notebook after getting pos/neg from the labeler, e.g.:
-        pos_embeddings = get_embeddings_by_tile_ids(embeddings_con, pos['tile_id'].values)
-    """
-    if len(tile_ids) == 0:
-        return connection.execute(f"SELECT * FROM {table_name} LIMIT 0").df()
-    placeholders = ','.join([f"'{tid}'" for tid in tile_ids])
-    query = f"SELECT * FROM {table_name} WHERE tile_id IN ({placeholders})"
-    return connection.execute(query).df()
-
-
 def add_ee_basemaps(labeler, geojson_path, start_date, end_date):
     """Add Earth Engine HSV and RGB median basemaps to BASEMAP_TILES and optionally
     switch the labeler to the first one. Call this only if you want EE basemaps;
