@@ -128,6 +128,10 @@ def get_detections(embeddings, model, threshold, boundary_path=None, batch_size=
         out = gdf.iloc[batch_positions[mask]].copy()
         out["probability"] = probs[mask]
         detections_list.append(out)
+    if not detections_list:
+        empty = gdf.iloc[0:0].copy()
+        empty["probability"] = pd.Series(dtype=float)
+        return empty
     detections = pd.concat(detections_list, ignore_index=True)
     detections = gpd.GeoDataFrame(detections, geometry="geometry")
     if boundary_path:
