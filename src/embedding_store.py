@@ -92,26 +92,32 @@ class DuckDBVectorStore:
 class EmbeddingMapper:
     """Map points to nearest centroid id; get vectors by id from a VectorStore.
 
-    centroid_gdf: GeoDataFrame with geometry; index is the id space (integer
-    or tile_id). vector_store: DuckDB or in-memory backend implementing
+    centroid_gdf: GeoDataFrame with geometry; has range index and id_column as
+    a column. vector_store: DuckDB or in-memory backend implementing
     get_vectors(ids).
     """
 
-    def __init__(self, centroid_gdf: gpd.GeoDataFrame, vector_store: VectorStore):
+    def __init__(
+        self,
+        centroid_gdf: gpd.GeoDataFrame,
+        vector_store: VectorStore,
+        id_column: str = "tile_id",
+    ):
         self.gdf = centroid_gdf
         self.sindex = self.gdf.sindex
         self._store = vector_store
+        self._id_column = id_column
 
     @property
     def id_column(self) -> str | None:
-        """Name of the id/tile column (same as gdf.index.name). Use for predict_df, get_detections output, detections_to_rectpolys."""
-        return self.gdf.index.name
+        """Name of the id/tile column. Use for predict_df, get_detections output, detections_to_rectpolys."""
+        return self._id_column
 
     def map_points(self, df: gpd.GeoDataFrame) -> pd.Series:
         """Map geometry to nearest centroid. Returns Series of ids, index = df.index."""
         nearest_idxs = self.sindex.nearest(df.geometry, return_all=False)[1]
-        ids = self.gdf.iloc[nearest_idxs].index
-        return pd.Series(ids, index=df.index)
+        ids = self.gdf[self._id_column].iloc[nearest_idxs]
+        return pd.Series(ids.values, index=df.index)
 
     def get_vectors(
         self, ids: Union[pd.Series, pd.Index, list, np.ndarray]
@@ -150,19 +156,21 @@ def from_duckdb(
 ) -> EmbeddingMapper:
     """Build an EmbeddingMapper from a centroid GeoDataFrame and DuckDB table.
 
-    centroid_gdf must have id_column as a column or as index. If it is a
-    column, it is set as index so gdf.index is the id space (consistent with
-    map_points and get_detections).
+    centroid_gdf must have id_column as a column or as index. It is normalized
+    to range index + id_column as column (consistent with map_points and get_detections).
     """
     centroid_gdf = centroid_gdf.copy()
     if id_column in centroid_gdf.columns:
-        centroid_gdf = centroid_gdf.set_index(id_column)
-    elif centroid_gdf.index.name != id_column:
+        centroid_gdf.index = np.arange(len(centroid_gdf))
+    elif centroid_gdf.index.name == id_column:
+        centroid_gdf[id_column] = centroid_gdf.index.values
+        centroid_gdf.index = np.arange(len(centroid_gdf))
+    else:
         raise ValueError(
             f"centroid_gdf must have '{id_column}' as column or index"
         )
     store = DuckDBVectorStore(connection, table_name, id_column=id_column)
-    return EmbeddingMapper(centroid_gdf, store)
+    return EmbeddingMapper(centroid_gdf, store, id_column=id_column)
 
 
 def from_dataframe(
@@ -175,9 +183,9 @@ def from_dataframe(
     """Build an EmbeddingMapper (or centroid gdf + store) from a GeoDataFrame.
 
     Geometry is converted to centroids (points); if already points, unchanged.
-    If id_column is None, uses
-    integer index 0..n-1 with index.name = 'tile_id'. If return_mapper is False,
-    returns (centroid_gdf, InMemoryVectorStore); otherwise returns EmbeddingMapper.
+    Centroid gdf has range index and an id column (id_column if provided, else
+    'tile_id' with ordinal 0..n-1). If return_mapper is False, returns
+    (centroid_gdf, InMemoryVectorStore); otherwise returns EmbeddingMapper.
     """
     if geometry_col not in gdf.columns:
         raise ValueError(f"Geometry column '{geometry_col}' not in DataFrame")
@@ -186,17 +194,18 @@ def from_dataframe(
         embedding_cols = [c for c in gdf.columns if c not in exclude]
     centroid_gdf = gdf[[geometry_col]].copy()
     centroid_gdf[geometry_col] = centroid_gdf[geometry_col].centroid
+    centroid_gdf.index = np.arange(len(gdf))
     if id_column and id_column in gdf.columns:
-        centroid_gdf.index = gdf[id_column].values
-        centroid_gdf.index.name = id_column
+        centroid_gdf[id_column] = gdf[id_column].values
+        id_col_name = id_column
     else:
-        centroid_gdf.index = np.arange(len(gdf))
-        centroid_gdf.index.name = "tile_id"  # ordinal ids
+        centroid_gdf["tile_id"] = np.arange(len(gdf))
+        id_col_name = "tile_id"
     vectors_df = gdf[embedding_cols].copy()
-    vectors_df.index = centroid_gdf.index
+    vectors_df.index = centroid_gdf[id_col_name].values
     store = InMemoryVectorStore(vectors_df)
     if return_mapper:
-        return EmbeddingMapper(centroid_gdf, store)
+        return EmbeddingMapper(centroid_gdf, store, id_column=id_col_name)
     return centroid_gdf, store
 
 

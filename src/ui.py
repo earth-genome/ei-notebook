@@ -270,18 +270,18 @@ class GeoLabeler:
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # Save positive points
+        # Save positive points (pos_ids are iloc positions)
         if self.pos_ids:
-            pos_gdf = self.gdf.loc[self.pos_ids][["geometry"]]
+            pos_gdf = self.gdf.iloc[self.pos_ids][["geometry"]].copy()
             path = self.save_dir / f"positive_points_{timestamp}.geojson"
             pos_gdf.to_file(path, driver="GeoJSON")
             print(f"Saved positive points to {path}")
         else:
             print("No positive points to save")
 
-        # Save negative points
+        # Save negative points (neg_ids are iloc positions)
         if self.neg_ids:
-            neg_gdf = self.gdf.loc[self.neg_ids][["geometry"]]
+            neg_gdf = self.gdf.iloc[self.neg_ids][["geometry"]].copy()
             path = self.save_dir / f"negative_points_{timestamp}.geojson"
             neg_gdf.to_file(path, driver="GeoJSON")
             print(f"Saved negative points to {path}")
@@ -315,8 +315,8 @@ class GeoLabeler:
         self.draw_control.clear()
 
     def update_layers(self):
-        self.pos_layer.data = json.loads(self.gdf.loc[self.pos_ids][["geometry"]].to_json())
-        self.neg_layer.data = json.loads(self.gdf.loc[self.neg_ids][["geometry"]].to_json())
+        self.pos_layer.data = json.loads(self.gdf.iloc[self.pos_ids][["geometry"]].to_json())
+        self.neg_layer.data = json.loads(self.gdf.iloc[self.neg_ids][["geometry"]].to_json())
 
     def label_point(self, **kwargs):
         """Assign a label and map layer to a clicked map point."""
@@ -345,14 +345,14 @@ class GeoLabeler:
                 
         if self.select_val == 1:
             self.pos_ids.append(idx)
-            self.pos_layer.data = json.loads(self.gdf.loc[self.pos_ids][["geometry"]].to_json())
+            self.pos_layer.data = json.loads(self.gdf.iloc[self.pos_ids][["geometry"]].to_json())
         elif self.select_val == 0:
             self.neg_ids.append(idx)
-            self.neg_layer.data = json.loads(self.gdf.loc[self.neg_ids][["geometry"]].to_json())
+            self.neg_layer.data = json.loads(self.gdf.iloc[self.neg_ids][["geometry"]].to_json())
         else:
-            self.erase_layer.data = json.loads(self.gdf.loc[[idx]][["geometry"]].to_json())
-            self.pos_layer.data = json.loads(self.gdf.loc[self.pos_ids][["geometry"]].to_json())
-            self.neg_layer.data = json.loads(self.gdf.loc[self.neg_ids][["geometry"]].to_json())
+            self.erase_layer.data = json.loads(self.gdf.iloc[[idx]][["geometry"]].to_json())
+            self.pos_layer.data = json.loads(self.gdf.iloc[self.pos_ids][["geometry"]].to_json())
+            self.neg_layer.data = json.loads(self.gdf.iloc[self.neg_ids][["geometry"]].to_json())
 
     def update_layer(self, layer, new_data):
         """Add points to the map for visualization, without changing labels."""

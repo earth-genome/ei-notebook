@@ -1,9 +1,8 @@
 """ML and validation utilities for satellite embedding models.
 
 Used by ei_alt_workflow.ipynb. Expects an EmbeddingMapper (from embedding_store)
-with .gdf, .get_vectors(ids), and .id_column (gdf.index.name). predict_df and
-detections_to_rectpolys use embeddings.id_column so the user does not pass id/tile
-column names explicitly.
+with .gdf, .get_vectors(ids), and .id_column. predict_df and detections_to_rectpolys
+use embeddings.id_column so the user does not pass id/tile column names explicitly.
 """
 
 import math
@@ -105,26 +104,29 @@ def roc_curve(y_true, probs, annotate_thresholds=False):
 def get_detections(embeddings, model, threshold, boundary_path=None, batch_size=10000):
     """Run model over all embedding centroids and return positive detections.
 
-    embeddings: EmbeddingMapper (embedding_store) with .gdf and .get_vectors(ids).
+    Batches by gdf range index; converts to ids only for get_vectors(ids).
     boundary_path: Optional path to GeoJSON/shapefile to clip detections.
     Output GeoDataFrame has an id column with the same name as embeddings.id_column,
     plus geometry and probability.
     """
     gdf = embeddings.gdf
-    tile_ids = gdf.index.to_numpy()
-    n_batches = math.ceil(len(tile_ids) / batch_size)
-    batches = [
-        tile_ids[i * batch_size : (i + 1) * batch_size]
-        for i in range(n_batches)
-    ]
+    id_column = embeddings.id_column
+    n = len(gdf)
+    n_batches = math.ceil(n / batch_size)
     detections_list = []
-    for batch in batches:
-        X = embeddings.get_vectors(batch)
+    for i in range(n_batches):
+        start = i * batch_size
+        end = min((i + 1) * batch_size, n)
+        batch_positions = np.arange(start, end)
+        ids = gdf[id_column].iloc[batch_positions]
+        X = embeddings.get_vectors(ids)
         probs, y_pred = predict(X, model, threshold)
         mask = y_pred.astype(bool)
-        out = gdf.loc[batch[mask]].copy()
+        if not mask.any():
+            continue
+        out = gdf.iloc[batch_positions[mask]].copy()
         out["probability"] = probs[mask]
-        detections_list.append(out.reset_index())
+        detections_list.append(out)
     detections = pd.concat(detections_list, ignore_index=True)
     detections = gpd.GeoDataFrame(detections, geometry="geometry")
     if boundary_path:
@@ -146,7 +148,8 @@ def detections_to_rectpolys(
     Uses embeddings.id_column to find the id column in detections.
     """
     id_column = embeddings.id_column
-    centroids = embeddings.gdf.loc[detections[id_column]]
+    gdf = embeddings.gdf
+    centroids = gdf[gdf[id_column].isin(detections[id_column])].copy()
     first_point = centroids.geometry.iloc[0]
     zone = int((first_point.x + 180) / 6) + 1
     epsg = 32600 + zone if first_point.y >= 0 else 32700 + zone
