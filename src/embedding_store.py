@@ -67,8 +67,7 @@ class DuckDBVectorStore:
         self, ids: Union[pd.Series, pd.Index, list, np.ndarray]
     ) -> pd.DataFrame:
         ids_full = pd.Series(ids) if not isinstance(ids, pd.Series) else ids
-        ids_unique = ids_full.unique()
-        if len(ids_unique) == 0:
+        if len(ids_full) == 0:
             df = self._con.execute(
                 f"SELECT * FROM {self._table_name} LIMIT 0"
             ).fetchdf()
@@ -77,7 +76,7 @@ class DuckDBVectorStore:
             if isinstance(tid, str):
                 return f"'{tid}'"
             return str(int(tid))
-        placeholders = ", ".join(_quote(tid) for tid in ids_unique)
+        placeholders = ", ".join(_quote(tid) for tid in ids_full)
         query = f"""
             SELECT * FROM {self._table_name}
             WHERE {self._id_column} IN ({placeholders})
