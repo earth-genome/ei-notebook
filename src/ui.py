@@ -82,8 +82,8 @@ class GeoLabeler:
         self.map = Map(
             basemap=self.basemap_layer,
             center=(cen.y, cen.x), zoom=7, layout={'height': '600px'},
-            scroll_wheel_zoom=True, attribution_control=True)
-        # Ensure attribution is visible (TileLayer attribution can be missed by the default control)
+            scroll_wheel_zoom=True, attribution_control=False)
+        # Single attribution box that we keep in sync when toggling basemaps
         self._attribution_html = HTML(
             value=f'<div style="font-size: 10px; color: #333;">{attribution}</div>',
             layout=Layout(margin='0', padding='2px 4px'))
