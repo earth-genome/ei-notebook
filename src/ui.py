@@ -362,9 +362,10 @@ class GeoLabeler:
 
 
 def add_ee_basemaps(labeler, geojson_path, start_date, end_date):
-    """Add Earth Engine HSV and RGB median basemaps to BASEMAP_TILES and optionally
-    switch the labeler to the first one. Call this only if you want EE basemaps;
-    it triggers EE initialization and authentication.
+    """Add Earth Engine HSV and RGB median basemaps to BASEMAP_TILES.
+    The current basemap is left unchanged; use the Basemap toggle to switch to
+    HSV_MEDIAN or RGB_MEDIAN. Call this only if you want EE basemaps; it
+    triggers EE initialization and authentication.
 
     Usage:
         labeler = GeoLabeler(gdf, geojson_path, ...)
@@ -386,13 +387,12 @@ def add_ee_basemaps(labeler, geojson_path, start_date, end_date):
         'min': [0, 0, 0], 'max': [1, 1, 1],
         'bands': ['hue', 'saturation', 'value']})
     BASEMAP_TILES['HSV_MEDIAN'] = hsv_url
+    BASEMAP_ATTRIBUTIONS['HSV_MEDIAN'] = '© Copernicus via Earth Engine'
     rgb_median = get_s2_rgb_median(
         ee_boundary, start_date, end_date, scale_factor=10000)
     rgb_url = get_ee_image_url(rgb_median, {
         'min': [0, 0, 0], 'max': [0.25, 0.25, 0.25],
         'bands': ['B4', 'B3', 'B2']})
     BASEMAP_TILES['RGB_MEDIAN'] = rgb_url
-    # Optionally switch labeler to first EE basemap
-    labeler.basemap_layer.url = hsv_url
-    labeler.current_basemap = 'HSV_MEDIAN'
-    labeler.toggle_basemap_button.description = f'Basemap: {labeler.current_basemap}'
+    BASEMAP_ATTRIBUTIONS['RGB_MEDIAN'] = '© Copernicus via Earth Engine'
+    # EE basemaps are now in the toggle; current basemap is left unchanged.
