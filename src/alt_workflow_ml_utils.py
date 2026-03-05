@@ -73,7 +73,7 @@ def prec_rec_curve(y_true, probs, annotate_thresholds=False):
     """Compute precision-recall curve."""
     prec, rec, thresholds = metrics.precision_recall_curve(y_true, probs)
     fig, ax = plt.subplots()
-    ax.plot(rec, prec)
+    ax.plot(rec, prec, label="Patchwise")
     if annotate_thresholds:
         step = max(1, len(thresholds) // 20)
         for x, y, txt in zip(rec[::step], prec[::step], thresholds[::step]):
