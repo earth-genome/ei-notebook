@@ -55,9 +55,9 @@ class GeoLabeler:
     """
 
     def __init__(
-            self, gdf, geojson_path, baselayer_url=None, save_dir=None, **kwargs):
-        if baselayer_url is None:
-            baselayer_url = DEFAULT_BASEMAP_TILES['GOOGLE_HYBRID']
+            self, gdf, geojson_path, custom_baselayer_url=None, save_dir=None, **kwargs):
+        if custom_baselayer_url is None:
+            custom_baselayer_url = DEFAULT_BASEMAP_TILES['GOOGLE_HYBRID']
         print("Initializing GeoLabeler...")
         self.gdf = gdf.copy()
         self.save_dir = Path(save_dir) if save_dir else Path.cwd()
@@ -66,15 +66,15 @@ class GeoLabeler:
         self.basemap_attributions = dict(DEFAULT_BASEMAP_ATTRIBUTIONS)
         try:
             self.current_basemap = next(
-                k for k, v in self.basemap_tiles.items() if v == baselayer_url
+                k for k, v in self.basemap_tiles.items() if v == custom_baselayer_url
             )
         except StopIteration:
-            self.basemap_tiles['CUSTOM'] = baselayer_url
+            self.basemap_tiles['CUSTOM'] = custom_baselayer_url
             self.current_basemap = 'CUSTOM'
         self._custom_attribution = kwargs.get('attribution')
         attribution = self.basemap_attributions.get(self.current_basemap) or self._custom_attribution or ''
         self.basemap_layer = ipyl.TileLayer(
-            url=baselayer_url, no_wrap=True, name='basemap',
+            url=custom_baselayer_url, no_wrap=True, name='basemap',
             attribution=attribution)
         cen = gdf.geometry.unary_union.centroid
         self.map = Map(
