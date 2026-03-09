@@ -28,14 +28,13 @@ if not MAPBOX_ACCESS_TOKEN:
     MAPBOX_ACCESS_TOKEN = 'YOUR_MAPBOX_ACCESS_TOKEN'
     warnings.warn("MAPBOX_ACCESS_TOKEN environment variable not set. Using placeholder. Please set it for full functionality.")
 
-BASEMAP_TILES = {
+DEFAULT_BASEMAP_TILES = {
     'MAPTILER': f"https://api.maptiler.com/tiles/satellite-v2/{{z}}/{{x}}/{{y}}.jpg?key={MAPTILER_API_KEY}",
     'GOOGLE_HYBRID': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
     'MAPBOX': f"https://api.mapbox.com/v4/mapbox.satellite/{{z}}/{{x}}/{{y}}.png?access_token={MAPBOX_ACCESS_TOKEN}"
 }
 
-# Default attributions for BASEMAP_TILES; used when that layer is active. Custom layers use attribution= passed to GeoLabeler.
-BASEMAP_ATTRIBUTIONS = {
+DEFAULT_BASEMAP_ATTRIBUTIONS = {
     'MAPTILER': '<a href="https://www.maptiler.com/copyright/" target="_blank">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
     'GOOGLE_HYBRID': '© Airbus, Landsat, Copernicus, Maxar; Map data © Google',
     'MAPBOX': '<a href="https://www.mapbox.com/" target="_blank">&copy; Mapbox</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
@@ -58,21 +57,22 @@ class GeoLabeler:
     def __init__(
             self, gdf, geojson_path, baselayer_url=None, save_dir=None, **kwargs):
         if baselayer_url is None:
-            baselayer_url = BASEMAP_TILES['GOOGLE_HYBRID']
+            baselayer_url = DEFAULT_BASEMAP_TILES['GOOGLE_HYBRID']
         print("Initializing GeoLabeler...")
         self.gdf = gdf.copy()
         self.save_dir = Path(save_dir) if save_dir else Path.cwd()
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        # Match current basemap to BASEMAP_TILES or add custom URL
+        self.basemap_tiles = dict(DEFAULT_BASEMAP_TILES)
+        self.basemap_attributions = dict(DEFAULT_BASEMAP_ATTRIBUTIONS)
         try:
             self.current_basemap = next(
-                k for k, v in BASEMAP_TILES.items() if v == baselayer_url
+                k for k, v in self.basemap_tiles.items() if v == baselayer_url
             )
         except StopIteration:
-            BASEMAP_TILES['CUSTOM'] = baselayer_url
+            self.basemap_tiles['CUSTOM'] = baselayer_url
             self.current_basemap = 'CUSTOM'
-        self._custom_attribution = kwargs.get('attribution')  # for custom baselayer_url only
-        attribution = BASEMAP_ATTRIBUTIONS.get(self.current_basemap) or self._custom_attribution or ''
+        self._custom_attribution = kwargs.get('attribution')
+        attribution = self.basemap_attributions.get(self.current_basemap) or self._custom_attribution or ''
         self.basemap_layer = ipyl.TileLayer(
             url=baselayer_url, no_wrap=True, name='basemap',
             attribution=attribution)
@@ -248,14 +248,13 @@ class GeoLabeler:
         self.draw_control.clear()
 
     def toggle_basemap(self, b):
-        basemap_keys = list(BASEMAP_TILES.keys())
+        basemap_keys = list(self.basemap_tiles.keys())
         current_idx = basemap_keys.index(self.current_basemap)
         next_idx = (current_idx + 1) % len(basemap_keys)
         self.current_basemap = basemap_keys[next_idx]
 
-        # Update basemap layer URL and attribution for the selected tile
-        self.basemap_layer.url = BASEMAP_TILES[self.current_basemap]
-        attr = BASEMAP_ATTRIBUTIONS.get(self.current_basemap, self._custom_attribution or '')
+        self.basemap_layer.url = self.basemap_tiles[self.current_basemap]
+        attr = self.basemap_attributions.get(self.current_basemap, self._custom_attribution or '')
         self.basemap_layer.attribution = attr
         self._attribution_html.value = f'<div style="font-size: 10px; color: #333;">{attr}</div>'
         self.toggle_basemap_button.description = f'Basemap: {self.current_basemap}'
@@ -358,39 +357,36 @@ class GeoLabeler:
         layer.data = new_data
         self.execute_label_point = True
 
+    def add_ee_basemaps(self, geojson_path, start_date, end_date):
+        """Add Earth Engine HSV and RGB median basemaps to this labeler's
+        basemap toggle. The current basemap is left unchanged. Triggers EE
+        initialization and authentication.
 
-def add_ee_basemaps(labeler, geojson_path, start_date, end_date):
-    """Add Earth Engine HSV and RGB median basemaps to BASEMAP_TILES.
-    The current basemap is left unchanged; use the Basemap toggle to switch to
-    HSV_MEDIAN or RGB_MEDIAN. Call this only if you want EE basemaps; it
-    triggers EE initialization and authentication.
-
-    Usage:
-        labeler = GeoLabeler(gdf, geojson_path, ...)
-        add_ee_basemaps(labeler, geojson_path, start_date, end_date)  # optional
-    """
-    import shapely
-    import ee
-    from gee import (
-        get_s2_hsv_median,
-        get_s2_rgb_median,
-        get_ee_image_url,
-        initialize_ee_with_credentials,
-    )
-    initialize_ee_with_credentials()
-    boundary = gpd.read_file(geojson_path).geometry.iloc[0]
-    ee_boundary = ee.Geometry(shapely.geometry.mapping(boundary))
-    hsv_median = get_s2_hsv_median(ee_boundary, start_date, end_date)
-    hsv_url = get_ee_image_url(hsv_median, {
-        'min': [0, 0, 0], 'max': [1, 1, 1],
-        'bands': ['hue', 'saturation', 'value']})
-    BASEMAP_TILES['HSV_MEDIAN'] = hsv_url
-    BASEMAP_ATTRIBUTIONS['HSV_MEDIAN'] = '© Copernicus via Earth Engine'
-    rgb_median = get_s2_rgb_median(
-        ee_boundary, start_date, end_date, scale_factor=10000)
-    rgb_url = get_ee_image_url(rgb_median, {
-        'min': [0, 0, 0], 'max': [0.25, 0.25, 0.25],
-        'bands': ['B4', 'B3', 'B2']})
-    BASEMAP_TILES['RGB_MEDIAN'] = rgb_url
-    BASEMAP_ATTRIBUTIONS['RGB_MEDIAN'] = '© Copernicus via Earth Engine'
-    # EE basemaps are now in the toggle; current basemap is left unchanged.
+        Usage:
+            labeler = GeoLabeler(gdf, geojson_path, ...)
+            labeler.add_ee_basemaps(geojson_path, start_date, end_date)
+        """
+        import shapely
+        import ee
+        from gee import (
+            get_s2_hsv_median,
+            get_s2_rgb_median,
+            get_ee_image_url,
+            initialize_ee_with_credentials,
+        )
+        initialize_ee_with_credentials()
+        boundary = gpd.read_file(geojson_path).geometry.iloc[0]
+        ee_boundary = ee.Geometry(shapely.geometry.mapping(boundary))
+        hsv_median = get_s2_hsv_median(ee_boundary, start_date, end_date)
+        hsv_url = get_ee_image_url(hsv_median, {
+            'min': [0, 0, 0], 'max': [1, 1, 1],
+            'bands': ['hue', 'saturation', 'value']})
+        self.basemap_tiles['HSV_MEDIAN'] = hsv_url
+        self.basemap_attributions['HSV_MEDIAN'] = '© Copernicus via Earth Engine'
+        rgb_median = get_s2_rgb_median(
+            ee_boundary, start_date, end_date, scale_factor=10000)
+        rgb_url = get_ee_image_url(rgb_median, {
+            'min': [0, 0, 0], 'max': [0.25, 0.25, 0.25],
+            'bands': ['B4', 'B3', 'B2']})
+        self.basemap_tiles['RGB_MEDIAN'] = rgb_url
+        self.basemap_attributions['RGB_MEDIAN'] = '© Copernicus via Earth Engine'
