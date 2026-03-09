@@ -40,6 +40,7 @@ def main(
     con = duckdb.connect(db_path)
     seen_tile_ids = set()
     centroid_dfs = []
+    boundary = gpd.read_file(clip_path) if clip_path else None
     print_mem_usage("Start")
 
     for parquet_path in tqdm(parquet_paths):
@@ -56,8 +57,7 @@ def main(
                 f"geometry column '{geometry_col}' not in {parquet_path}."
             )
 
-        if clip_path:
-            boundary = gpd.read_file(clip_path)
+        if boundary is not None:
             gdf = gpd.clip(gdf, boundary)
         gdf = gdf.reset_index(drop=True)
 
