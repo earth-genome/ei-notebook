@@ -45,36 +45,41 @@ class GeoLabeler:
     satellite image embedding tiles.
 
     Attributes:
-        gdf: GeoDataFrame (centroids or full embedding rows) with geometry
-        map: Leaflet map
-        save_dir: Optional path; Save Dataset button writes GeoJSON files here (default: cwd)
-        pos_indices, neg_indices: Lists of dataframe indices for pos/neg labeled points
-        pos_layer, neg_layer, erase_layer, points: Map layers
-        select_val: 1/0/-100/2 for pos/neg/erase/Google Maps
-        detection_gdf: Optional; set by notebook for lasso selection over search results
+        gdf: GeoDataFrame (centroids or full embedding rows) with geometry.
+        map: ipyleaflet Map widget.
+        save_dir: Directory for saved GeoJSON files (default: cwd).
+        basemap_tiles: Dict of basemap name -> tile URL, copied from
+            DEFAULT_BASEMAP_TILES at init. add_ee_basemaps() appends to this.
+        basemap_attributions: Dict of basemap name -> attribution string.
+        current_basemap: Key into basemap_tiles for the active basemap.
+        basemap_layer: The TileLayer shown on the map.
+        pos_indices, neg_indices: Lists of iloc positions for labeled points.
+        pos_layer, neg_layer, erase_layer, points: GeoJSON map layers.
+        select_val: 1/0/-100/2 for pos/neg/erase/Google Maps mode.
+        detection_gdf: Optional; set by notebook for lasso selection over
+            search results.
     """
 
     def __init__(
-            self, gdf, geojson_path, custom_baselayer_url=None, save_dir=None, **kwargs):
-        if custom_baselayer_url is None:
-            custom_baselayer_url = DEFAULT_BASEMAP_TILES['GOOGLE_HYBRID']
+            self, gdf, geojson_path, custom_baselayer_url=None,
+            custom_attribution=None, save_dir=None):
         print("Initializing GeoLabeler...")
         self.gdf = gdf.copy()
         self.save_dir = Path(save_dir) if save_dir else Path.cwd()
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.basemap_tiles = dict(DEFAULT_BASEMAP_TILES)
         self.basemap_attributions = dict(DEFAULT_BASEMAP_ATTRIBUTIONS)
-        try:
-            self.current_basemap = next(
-                k for k, v in self.basemap_tiles.items() if v == custom_baselayer_url
-            )
-        except StopIteration:
+        if custom_baselayer_url is not None:
             self.basemap_tiles['CUSTOM'] = custom_baselayer_url
             self.current_basemap = 'CUSTOM'
-        self._custom_attribution = kwargs.get('attribution')
+            initial_basemap_url = custom_baselayer_url
+        else:
+            self.current_basemap = 'GOOGLE_HYBRID'
+            initial_basemap_url = self.basemap_tiles['GOOGLE_HYBRID']
+        self._custom_attribution = custom_attribution
         attribution = self.basemap_attributions.get(self.current_basemap) or self._custom_attribution or ''
         self.basemap_layer = ipyl.TileLayer(
-            url=custom_baselayer_url, no_wrap=True, name='basemap',
+            url=initial_basemap_url, no_wrap=True, name='basemap',
             attribution=attribution)
         cen = gdf.geometry.unary_union.centroid
         self.map = Map(
