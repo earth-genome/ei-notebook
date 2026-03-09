@@ -15,8 +15,6 @@ from ipywidgets import Button, HTML, Layout, VBox, HBox
 import pandas as pd
 from shapely.geometry import Point
 
-from embedding_store import EmbeddingMapper
-
 warnings.simplefilter("ignore", category=FutureWarning)
 
 # Get API keys from environment variables
