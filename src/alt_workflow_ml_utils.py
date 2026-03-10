@@ -19,7 +19,7 @@ from shapely.geometry import box
 warnings.simplefilter("ignore", category=FutureWarning)
 
 
-def predict(X, model, threshold):
+def predict(X, model, threshold=0.5):
     """Run model inference.
 
     Arguments:
@@ -35,7 +35,7 @@ def predict(X, model, threshold):
     return probs, y_pred
 
 
-def predict_df(df, embeddings, model, threshold=1):
+def predict_df(df, embeddings, model, threshold=0.5):
     """Run model inference on a dataframe of labeled geographic points."""
     tile_ids = df[embeddings.id_column]
     X = embeddings.get_vectors(tile_ids)
