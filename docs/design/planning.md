@@ -1,10 +1,10 @@
-# Design note: Range index + id column
+## Design note: Range index + id column
 
 **Timestamp:** 2026.03.05
 
 ---
 
-## Context
+### Context
 
 In some places we use **positional indices** (e.g. sindex, Annoy). In others we use a **label index** (id_column, e.g. tile_id) to retrieve vectors from DuckDB. After moving id_column to be the index of the centroid GeoDataFrame (for a cleaner embedding_store contract), GeoLabeler and other positional use broke because `sindex.nearest` returns iloc positions but the code used `.loc` with them.
 
@@ -14,13 +14,13 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 
 ---
 
-## 1. embedding_store.py
+### 1. embedding_store.py
 
 **Centroid GeoDataFrame (embeddings.gdf)**
 
 - **Index:** Always `np.arange(len(gdf))` (range index). Do not use id values as the index.
 - **Id values:** Keep them in a column, e.g. `centroid_gdf[id_column] = ...` (or `centroid_gdf["tile_id"]` when `id_column` is None, using ordinal 0..n-1).
-- Net: range index + explicit id column; the index is never “the id”.
+- Net: range index + explicit id column; the index is never "the id".
 
 **from_dataframe / from_parquet**
 
@@ -33,20 +33,20 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 **from_duckdb**
 
 - Caller passes a centroid GeoDataFrame that may have `id_column` as **index** or as **column**.
-- Normalize to “range index + id column”:
+- Normalize to "range index + id column":
   - If `id_column` is the index: add `centroid_gdf[id_column] = centroid_gdf.index`, then `centroid_gdf.index = np.arange(len(centroid_gdf))`.
   - If `id_column` is already a column: set `centroid_gdf.index = np.arange(len(centroid_gdf))`.
-- EmbeddingMapper must know the id column name; it can’t rely on `gdf.index.name` anymore, so it needs an explicit `id_column` argument (or we infer it and store it).
+- EmbeddingMapper must know the id column name; it can't rely on `gdf.index.name` anymore, so it needs an explicit `id_column` argument (or we infer it and store it).
 
 **EmbeddingMapper**
 
-- **id_column:** Can’t be `self.gdf.index.name` anymore. Store the id column name explicitly (e.g. `__init__(self, centroid_gdf, vector_store, id_column="tile_id")`) and have the property return that.
-- **map_points:** Keep returning **ids** (values from the id column), not positions, so existing “assign to id column + call get_vectors(ids)” usage still works. Implementation: get nearest **position** from sindex, then `return self.gdf[self.id_column].iloc[nearest_positions]` (same shape as today, but coming from the column).
+- **id_column:** Can't be `self.gdf.index.name` anymore. Store the id column name explicitly (e.g. `__init__(self, centroid_gdf, vector_store, id_column="tile_id")`) and have the property return that.
+- **map_points:** Keep returning **ids** (values from the id column), not positions, so existing "assign to id column + call get_vectors(ids)" usage still works. Implementation: get nearest **position** from sindex, then `return self.gdf[self.id_column].iloc[nearest_positions]` (same shape as today, but coming from the column).
 - **get_vectors(ids):** Unchanged: it receives ids and passes them to the store. No change to DuckDB/InMemory store APIs.
 
 **DuckDBVectorStore / InMemoryVectorStore**
 
-- No change: they still take ids and return embedding vectors. InMemory’s internal DataFrame is still indexed by id (as set from `centroid_gdf[id_column]` above).
+- No change: they still take ids and return embedding vectors. InMemory's internal DataFrame is still indexed by id (as set from `centroid_gdf[id_column]` above).
 
 **get_vectors() return value: no id, no index**
 
@@ -57,7 +57,7 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 
 ---
 
-## 2. ui.py (GeoLabeler)
+### 2. ui.py (GeoLabeler)
 
 - **pos_indices / neg_indices:** Keep storing **positions** (results of `sindex.nearest`), as in the previous diagnosis.
 - **Layer updates and save:** Use **`.iloc`** when indexing into `self.gdf` (e.g. `self.gdf.iloc[self.pos_indices][["geometry"]]`, and same for neg and for `save_dataset`).
@@ -65,22 +65,22 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 
 ---
 
-## 3. Annoy and notebooks
+### 3. Annoy and notebooks
 
 - Annoy item ids are 0..n-1 (row order) → **positions**.
 - When you get nearest items from Annoy, you get positions. To call `get_vectors(...)` you need **ids**: `ids = embeddings.gdf[embeddings.id_column].iloc[positions]`, then `get_vectors(ids)`.
-- So any place that builds an Annoy index from `embeddings.gdf` (or equivalent) and then uses the returned indices to fetch vectors should convert **position → id** via the id column before calling `get_vectors`. That’s the only change where Annoy is used.
+- So any place that builds an Annoy index from `embeddings.gdf` (or equivalent) and then uses the returned indices to fetch vectors should convert **position → id** via the id column before calling `get_vectors`. That's the only change where Annoy is used.
 
 ---
 
-## 4. ml_utils and other callers
+### 4. ml_utils and other callers
 
-- **predict_df / get_detections / detections_to_rectpolys:** They use `embeddings.id_column` to find the “id” column in DataFrames. That column will still hold id values (tile_id or ordinal); it’s just that the **mapper’s gdf** now has those ids in a column instead of in the index. So they keep using the same column name; no conceptual change.
-- Any code that does **index-based** access on `embeddings.gdf` (e.g. `gdf.loc[some_id]`) would need to switch to “id column” semantics, e.g. `gdf[gdf[id_column] == some_id]` or a small helper, if such usage exists.
+- **predict_df / get_detections / detections_to_rectpolys:** They use `embeddings.id_column` to find the "id" column in DataFrames. That column will still hold id values (tile_id or ordinal); it's just that the **mapper's gdf** now has those ids in a column instead of in the index. So they keep using the same column name; no conceptual change.
+- Any code that does **index-based** access on `embeddings.gdf` (e.g. `gdf.loc[some_id]`) would need to switch to "id column" semantics, e.g. `gdf[gdf[id_column] == some_id]` or a small helper, if such usage exists.
 
 ---
 
-## 5. Summary table
+### 5. Summary table
 
 | Component              | Current (id as index)     | After (range index + id column)                    |
 |------------------------|---------------------------|----------------------------------------------------|
@@ -95,8 +95,8 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 
 ---
 
-## 6. Why this resolves the clash
+### 6. Why this resolves the clash
 
 - **Positional use (sindex, Annoy, GeoLabeler):** All use integer positions 0..n-1; `gdf.iloc[positions]` is always correct.
 - **Id-based use (DuckDB, get_vectors, saving by tile_id):** All use the **column** `id_column`; no dependence on the index.
-- **API:** `map_points()` and `get_vectors(ids)` stay the same from the caller’s perspective; only the internal representation of the centroid gdf (index vs column) and the iloc/loc usage in the labeler (and position→id for Annoy) change.
+- **API:** `map_points()` and `get_vectors(ids)` stay the same from the caller's perspective; only the internal representation of the centroid gdf (index vs column) and the iloc/loc usage in the labeler (and position→id for Annoy) change.
