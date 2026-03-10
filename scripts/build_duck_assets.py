@@ -76,9 +76,9 @@ def main(
         del gdf
         gc.collect()
 
-    pd.concat(centroid_dfs, ignore_index=True).to_parquet(
-        centroids_path, index=False
-    )
+    combined = pd.concat(centroid_dfs, ignore_index=True)
+    centroids_gdf = gpd.GeoDataFrame(combined, geometry=geometry_col)
+    centroids_gdf.to_parquet(centroids_path, index=False)
     
     result = con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
     print(f"Inserted {result[0]} rows into {table_name}.")
