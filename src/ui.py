@@ -56,8 +56,8 @@ class GeoLabeler:
         pos_indices, neg_indices: Lists of iloc positions for labeled points.
         pos_layer, neg_layer, erase_layer, points: GeoJSON map layers.
         select_val: 1/0/-100/2 for pos/neg/erase/Google Maps mode.
-        detection_gdf: Optional; set by notebook for lasso selection over
-            search results.
+        detection_gdf: Optional; set by notebook for lasso selection. Must use
+            index = iloc into self.gdf (e.g. labeler.gdf.iloc[positions][['geometry']]).
     """
 
     def __init__(
@@ -302,6 +302,7 @@ class GeoLabeler:
             self.detection_gdf.geometry.within(self.polygon.geometry.iloc[0])]
         
         print(self.points_inside)
+        # points_inside.index are iloc positions into self.gdf (detection_gdf contract).
         for idx in self.points_inside.index:
             if idx in self.pos_indices:
                 self.pos_indices.remove(idx)
