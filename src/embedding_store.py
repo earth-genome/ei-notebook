@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Protocol, Union
+import warnings
 
 from annoy import AnnoyIndex
 
@@ -129,7 +130,7 @@ class EmbeddingMapper:
 def from_parquet(
     path: Union[str, Path],
     geometry_col: str = "geometry",
-    id_column: str | None = None,
+    id_column: str = "tile_id",
     embedding_cols: list[str] | None = None,
     return_mapper: bool = True,
 ) -> Union[tuple[gpd.GeoDataFrame, InMemoryVectorStore], EmbeddingMapper]:
@@ -176,36 +177,41 @@ def from_duckdb(
 def from_dataframe(
     gdf: gpd.GeoDataFrame,
     geometry_col: str = "geometry",
-    id_column: str | None = None,
+    id_column: str = "tile_id",
     embedding_cols: list[str] | None = None,
     return_mapper: bool = True,
 ) -> Union[tuple[gpd.GeoDataFrame, InMemoryVectorStore], EmbeddingMapper]:
     """Build an EmbeddingMapper (or centroid gdf + store) from a GeoDataFrame.
 
     Geometry is converted to centroids (points); if already points, unchanged.
-    Centroid gdf has range index and an id column (id_column if provided, else
-    'tile_id' with ordinal 0..n-1). If return_mapper is False, returns
-    (centroid_gdf, InMemoryVectorStore); otherwise returns EmbeddingMapper.
+    Centroid gdf has range index and an id column: id_column (default
+    'tile_id'). If that column exists in gdf, it is used; otherwise an ordinal
+    id (0..n-1) is created with that name and a warning is issued. If
+    return_mapper is False, returns (centroid_gdf, InMemoryVectorStore);
+    otherwise returns EmbeddingMapper.
     """
     if geometry_col not in gdf.columns:
         raise ValueError(f"Geometry column '{geometry_col}' not in DataFrame")
     if embedding_cols is None:
-        exclude = {geometry_col} | ({id_column} if id_column else {"tile_id"})
+        exclude = {geometry_col, id_column}
         embedding_cols = [c for c in gdf.columns if c not in exclude]
     centroid_gdf = gdf[[geometry_col]].copy()
     centroid_gdf[geometry_col] = centroid_gdf[geometry_col].centroid
     centroid_gdf.index = np.arange(len(gdf))
-    if id_column and id_column in gdf.columns:
+    if id_column in gdf.columns:
         centroid_gdf[id_column] = gdf[id_column].values
-        id_col_name = id_column
     else:
-        centroid_gdf["tile_id"] = np.arange(len(gdf))
-        id_col_name = "tile_id"
+        warnings.warn(
+            f"Column '{id_column}' not in DataFrame; creating ordinal id (0..n-1) with that name.",
+            UserWarning,
+            stacklevel=2,
+        )
+        centroid_gdf[id_column] = np.arange(len(gdf))
     vectors_df = gdf[embedding_cols].copy()
-    vectors_df.index = centroid_gdf[id_col_name].values
+    vectors_df.index = centroid_gdf[id_column].values
     store = InMemoryVectorStore(vectors_df)
     if return_mapper:
-        return EmbeddingMapper(centroid_gdf, store, id_column=id_col_name)
+        return EmbeddingMapper(centroid_gdf, store, id_column=id_column)
     return centroid_gdf, store
 
 
