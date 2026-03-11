@@ -1,11 +1,17 @@
-# Crop Mapping Pipeline
+# Earth Index Modeling Pipeline
 
-This repository contains a pipeline for training a tile-based crop classifier using satellite imagery and interactive labeling.
+This repository contains a pipeline for training a tile-based classifier using satellite imagery and interactive labeling.
 
 ## Prerequisites
-First, there are some basic system requirements to take care of. Please refer to the linked documentation for installation.
-1. `gcloud` CLI: https://cloud.google.com/sdk/docs/install
-2. `earthengine` python client library: https://developers.google.com/earth-engine/guides/python_install
+First, there are some basic system requirements to take care
+of. Please refer to the linked documentation for installation.
+
+Optional:
+1. `gcloud` CLI: https://cloud.google.com/sdk/docs/install, for
+   embeddings download. Otherwise bring your own embeddings.
+2. `earthengine` python client library:
+   https://developers.google.com/earth-engine/guides/python_install,
+   if you want basemap imagery from Earth Engine, among others options.
 
 Please make sure you are authenticated with these tools before starting.
 
@@ -39,6 +45,11 @@ The pipeline consists of several steps:
 4. Train tile classifier and run inference
 5. Postprocess detections
 6. Iterate!
+
+**Note that there is an alternate workflow that exposes more of the machine
+  learning to the user, making it more customizable. It has some
+  differences in file paths, nomenclature, and options, but at a high level it's
+  conceptually equivalent. It runs out the single notebook `ei_alt_workflow.ipynb`.
 
 ## Pipeline Steps
 

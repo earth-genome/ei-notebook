@@ -1,30 +1,21 @@
-"""Map labeling interface and training utility functions for 
+"""Map labeling interface and training utility functions for
 machine learning on top of satellite foundation model embeddings."""
 
 import json
 import os
 import warnings
 from datetime import datetime
+from pathlib import Path
 
-
-import ee
 import geopandas as gpd
 import ipyleaflet as ipyl
-from ipyleaflet import Map, Marker, basemaps, CircleMarker, LayerGroup, GeoJSON, DrawControl
+from ipyleaflet import Map, DrawControl, GeoJSON
 from IPython.display import display
-from ipywidgets import Button, FloatSlider, VBox, HBox
-import matplotlib.pyplot as plt
-import numpy as np
+from ipywidgets import Button, HTML, Layout, VBox, HBox
 import pandas as pd
-import shapely
 from shapely.geometry import Point
-import sklearn.metrics as metrics
-
-from gee import get_s2_hsv_median, get_s2_rgb_median, get_ee_image_url, initialize_ee_with_credentials
 
 warnings.simplefilter("ignore", category=FutureWarning)
-
-initialize_ee_with_credentials()
 
 # Get API keys from environment variables
 MAPTILER_API_KEY = os.getenv('MAPTILER_API_KEY')
@@ -37,98 +28,67 @@ if not MAPBOX_ACCESS_TOKEN:
     MAPBOX_ACCESS_TOKEN = 'YOUR_MAPBOX_ACCESS_TOKEN'
     warnings.warn("MAPBOX_ACCESS_TOKEN environment variable not set. Using placeholder. Please set it for full functionality.")
 
-BASEMAP_TILES = {
+DEFAULT_BASEMAP_TILES = {
     'MAPTILER': f"https://api.maptiler.com/tiles/satellite-v2/{{z}}/{{x}}/{{y}}.jpg?key={MAPTILER_API_KEY}",
-    # 'HUTCH_TILE': 'https://tiles.earthindex.ai/v1/tiles/sentinel2-temporal-mosaics/2023-01-01/2024-01-01/rgb/{z}/{x}/{y}.webp',
     'GOOGLE_HYBRID': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
     'MAPBOX': f"https://api.mapbox.com/v4/mapbox.satellite/{{z}}/{{x}}/{{y}}.png?access_token={MAPBOX_ACCESS_TOKEN}"
 }
 
-class EmbeddingMapper:
-    """Map between geographic points and georeferenced satellite image embeddings.
-    
-    Attributes:
-        gdf: A pandas GeoDataFrame whose columns are embedding feature values and a geometry
-        sindex: gdf.sindex
-    
-    Methods: 
-        map_points: Map geometric points to a nearest entry in the embedding dataframe.
-        get_vectors: Pull feature vectors from embedding dataframe.
-    """
-    
-    def __init__(self, gdf):
-        
-        self.gdf = gdf
-        self.gdf.index = np.arange(len(self.gdf))
-        self.sindex = self.gdf.sindex 
-        
-    def map_points(self, df):
-        """Map geometric points to a nearest entry in the embedding dataframe.
-        
-        Arguments:
-            df: A GeoDataFrame with Point entries
-        """
-        return pd.Index(self.sindex.nearest(df.geometry, return_all=False)[1])
-    
-    def get_vectors(self, idx):
-        """Pull feature vectors from embedding dataframe."""
-        return self.gdf.loc[idx].drop(columns=['geometry'])
-
+DEFAULT_BASEMAP_ATTRIBUTIONS = {
+    'MAPTILER': '<a href="https://www.maptiler.com/copyright/" target="_blank">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
+    'GOOGLE_HYBRID': '© Airbus, Landsat, Copernicus, Maxar; Map data © Google',
+    'MAPBOX': '<a href="https://www.mapbox.com/" target="_blank">&copy; Mapbox</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
+}
 
 class GeoLabeler:
-    """An interactive Leaflet map for labeling geographic features relative to satellite image embedding tiles.
-    
-    Attributes: 
-        gdf: A pandas GeoDataFrame whose columns are embedding feature values and a geometry
-        map: A Leaflet map
-        pos_ids, neg_ids: Lists of dataframe indices associated to pos / neg labeled points
-        pos_layer, neg_layer, erase_layer, points: Leaflet map layers 
-        select_val: 1/0/-100/2 to indicate pos/neg/erase/google maps label action
-        execute_lable_point: Boolean flag for label_point() execution on map interaction
-    
-    External method: 
-        update_layer: Add points to the map for visualization, without changing labels.
-    
+    """Interactive Leaflet map for labeling geographic features relative to
+    satellite image embedding tiles.
+
+    Attributes:
+        gdf: GeoDataFrame (centroids or full embedding rows) with geometry.
+        map: ipyleaflet Map widget.
+        save_dir: Directory for saved GeoJSON files (default: cwd).
+        basemap_tiles: Dict of basemap name -> tile URL, copied from
+            DEFAULT_BASEMAP_TILES at init. add_ee_basemaps() appends to this.
+        basemap_attributions: Dict of basemap name -> attribution string.
+        current_basemap: Key into basemap_tiles for the active basemap.
+        basemap_layer: The TileLayer shown on the map.
+        pos_indices, neg_indices: Lists of iloc positions for labeled points.
+        pos_layer, neg_layer, erase_layer, points: GeoJSON map layers.
+        select_val: 1/0/-100/2 for pos/neg/erase/Google Maps mode.
     """
+
     def __init__(
-            self, gdf, geojson_path, mgrs_ids, start_date, end_date, imagery,
-            annoy_index, duckdb_connection, baselayer_url=BASEMAP_TILES['MAPTILER'], **kwargs):
+            self, gdf, geojson_path, custom_baselayer_url=None,
+            custom_attribution=None, save_dir=None):
         print("Initializing GeoLabeler...")
         self.gdf = gdf.copy()
-        self.annoy_index = annoy_index
-        self.duckdb_connection = duckdb_connection
-        self.current_basemap = 'MAPTILER'
-        self.basemap_layer = ipyl.TileLayer(url=baselayer_url, no_wrap=True, name='basemap', 
-                                       attribution=kwargs.get('attribution'))
-        self.ee_boundary = ee.Geometry(shapely.geometry.mapping(
-            gpd.read_file(geojson_path).geometry.iloc[0]))
-        
+        self.save_dir = Path(save_dir) if save_dir else Path.cwd()
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.basemap_tiles = dict(DEFAULT_BASEMAP_TILES)
+        self.basemap_attributions = dict(DEFAULT_BASEMAP_ATTRIBUTIONS)
+        if custom_baselayer_url is not None:
+            self.basemap_tiles['CUSTOM'] = custom_baselayer_url
+            self.current_basemap = 'CUSTOM'
+            initial_basemap_url = custom_baselayer_url
+        else:
+            self.current_basemap = 'GOOGLE_HYBRID'
+            initial_basemap_url = self.basemap_tiles['GOOGLE_HYBRID']
+        self._custom_attribution = custom_attribution
+        attribution = self.basemap_attributions.get(self.current_basemap) or self._custom_attribution or ''
+        self.basemap_layer = ipyl.TileLayer(
+            url=initial_basemap_url, no_wrap=True, name='basemap',
+            attribution=attribution)
         cen = gdf.geometry.unary_union.centroid
         self.map = Map(
             basemap=self.basemap_layer,
-            center=(cen.y, cen.x), zoom=7, layout={'height':'600px'},
-            scroll_wheel_zoom=True)
-
-        hsv_median = get_s2_hsv_median(
-            self.ee_boundary, start_date, end_date)
-
-        hsv_url = get_ee_image_url(hsv_median, {
-            'min': [0, 0, 0],
-            'max': [1, 1, 1],
-            'bands': ['hue', 'saturation', 'value']
-        })
-        BASEMAP_TILES['HSV_MEDIAN'] = hsv_url
-
-        rgb_median = get_s2_rgb_median(
-        self.ee_boundary, start_date, end_date, scale_factor=10000)
-
-        rgb_url = get_ee_image_url(rgb_median, {
-            'min': [0, 0, 0],
-            'max': [0.25, 0.25, 0.25],
-            'bands': ['B4', 'B3', 'B2']
-        })
-        BASEMAP_TILES['RGB_MEDIAN'] = rgb_url
-
+            center=(cen.y, cen.x), zoom=7, layout={'height': '600px'},
+            scroll_wheel_zoom=True, attribution_control=False)
+        # Single attribution box that we keep in sync when toggling basemaps
+        self._attribution_html = HTML(
+            value=f'<div style="font-size: 10px; color: #333;">{attribution}</div>',
+            layout=Layout(margin='0', padding='2px 4px'))
+        self.map.add(ipyl.WidgetControl(widget=self._attribution_html, position='bottomright'))
 
         print("Adding controls...")
         self.pos_button = Button(description='Positive')
@@ -147,25 +107,29 @@ class GeoLabeler:
         self.save_button.on_click(self.save_dataset)
         self.map.on_interaction(self.label_point)
         self.execute_label_point = True
-        self.mgrs_ids = mgrs_ids
-        self.select_val = -100 # Initialize to _erase_
-        self.pos_ids = []
-        self.neg_ids = []
-        self.detection_gdf = None
+        self.select_val = -100  # Initialize to _erase_
+        self.pos_indices = []
+        self.neg_indices = []
         self.lasso_mode = False
         
-        with open(geojson_path) as f:
-            region_layer = ipyl.GeoJSON(
-                    name="region",
-                    data=json.load(f),
-                    style={
-                        'color': '#FAFAFA',
-                        'opacity': 1,
-                        'fillOpacity': 0,
-                        'weight': 1
-                    }
-                )
+        geojson_path_str = geojson_path if isinstance(geojson_path, (str, bytes)) else str(geojson_path)
+        with open(geojson_path_str) as f:
+            region_data = json.load(f)
+        region_layer = ipyl.GeoJSON(
+            name="region",
+            data=region_data,
+            style={
+                'color': '#FFFFFF',
+                'weight': 2,
+                'opacity': 1,
+                'fillOpacity': 0,
+            },
+        )
         self.map.add_layer(region_layer)
+        # Fit initial viewport to the boundary GeoJSON
+        boundary_gdf = gpd.read_file(geojson_path_str)
+        (minx, miny, maxx, maxy) = boundary_gdf.total_bounds
+        self.map.fit_bounds([[miny, minx], [maxy, maxx]])
 
 
         # layer to contain positive labeled points
@@ -286,31 +250,40 @@ class GeoLabeler:
         self.draw_control.clear()
 
     def toggle_basemap(self, b):
-        basemap_keys = list(BASEMAP_TILES.keys())
+        basemap_keys = list(self.basemap_tiles.keys())
         current_idx = basemap_keys.index(self.current_basemap)
         next_idx = (current_idx + 1) % len(basemap_keys)
         self.current_basemap = basemap_keys[next_idx]
-        
-        # Update basemap layer
-        self.basemap_layer.url = BASEMAP_TILES[self.current_basemap]
+
+        self.basemap_layer.url = self.basemap_tiles[self.current_basemap]
+        attr = self.basemap_attributions.get(self.current_basemap, self._custom_attribution or '')
+        self.basemap_layer.attribution = attr
+        self._attribution_html.value = f'<div style="font-size: 10px; color: #333;">{attr}</div>'
         self.toggle_basemap_button.description = f'Basemap: {self.current_basemap}'
 
-    def save_dataset(self, b):
+    def save_dataset(self, b=None):
+        """Save positive and negative points to GeoJSON in save_dir.
+
+        Call from the UI via the Save Dataset button (b is the button) or from the
+        notebook as labeler.save_dataset().
+        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Save positive points
-        if self.pos_ids:
-            pos_gdf = self.gdf.loc[self.pos_ids][["geometry"]]
-            pos_gdf.to_file(f"positive_points_{timestamp}.geojson", driver="GeoJSON")
-            print(f"Saved positive points to positive_points_{timestamp}.geojson")
+
+        # Save positive points (pos_indices are iloc positions)
+        if self.pos_indices:
+            pos_gdf = self.gdf.iloc[self.pos_indices][["geometry"]].copy()
+            path = self.save_dir / f"positive_points_{timestamp}.geojson"
+            pos_gdf.to_file(path, driver="GeoJSON")
+            print(f"Saved positive points to {path}")
         else:
             print("No positive points to save")
-            
-        # Save negative points
-        if self.neg_ids:
-            neg_gdf = self.gdf.loc[self.neg_ids][["geometry"]]
-            neg_gdf.to_file(f"negative_points_{timestamp}.geojson", driver="GeoJSON")
-            print(f"Saved negative points to negative_points_{timestamp}.geojson")
+
+        # Save negative points (neg_indices are iloc positions)
+        if self.neg_indices:
+            neg_gdf = self.gdf.iloc[self.neg_indices][["geometry"]].copy()
+            path = self.save_dir / f"negative_points_{timestamp}.geojson"
+            neg_gdf.to_file(path, driver="GeoJSON")
+            print(f"Saved negative points to {path}")
         else:
             print("No negative points to save")
 
@@ -318,31 +291,25 @@ class GeoLabeler:
         if action != 'created':
             return
         self.polygon = gpd.GeoDataFrame.from_features([geo_json])
-
-        # Convert the GeoJSON layer data to a GeoDataFrame
-        self.points_gdf = gpd.GeoDataFrame.from_features(self.points.data['features'])
-        
-        self.points_inside = self.detection_gdf[
-            self.detection_gdf.geometry.within(self.polygon.geometry.iloc[0])]
-        
-        print(self.points_inside)
-        for idx in self.points_inside.index:
-            if idx in self.pos_ids:
-                self.pos_ids.remove(idx)
-            if idx in self.neg_ids:
-                self.neg_ids.remove(idx)
-            
+        polygon_geom = self.polygon.geometry.iloc[0]
+        self.points_inside = self.gdf[self.gdf.geometry.within(polygon_geom)]
+        iloc_positions = self.gdf.index.get_indexer(self.points_inside.index)
+        for idx in iloc_positions:
+            if idx in self.pos_indices:
+                self.pos_indices.remove(idx)
+            if idx in self.neg_indices:
+                self.neg_indices.remove(idx)
             if self.select_val == 1:
-                self.pos_ids.append(idx)
+                self.pos_indices.append(idx)
             elif self.select_val == 0:
-                self.neg_ids.append(idx)
+                self.neg_indices.append(idx)
         
         self.update_layers()
         self.draw_control.clear()
 
     def update_layers(self):
-        self.pos_layer.data = json.loads(self.gdf.loc[self.pos_ids][["geometry"]].to_json())
-        self.neg_layer.data = json.loads(self.gdf.loc[self.neg_ids][["geometry"]].to_json())
+        self.pos_layer.data = json.loads(self.gdf.iloc[self.pos_indices][["geometry"]].to_json())
+        self.neg_layer.data = json.loads(self.gdf.iloc[self.neg_indices][["geometry"]].to_json())
 
     def label_point(self, **kwargs):
         """Assign a label and map layer to a clicked map point."""
@@ -364,21 +331,21 @@ class GeoLabeler:
             return
         idx = self.gdf.sindex.nearest(Point(lon, lat))[1][0]
         
-        if idx in self.pos_ids:
-            self.pos_ids.remove(idx)
-        if idx in self.neg_ids:
-            self.neg_ids.remove(idx)
+        if idx in self.pos_indices:
+            self.pos_indices.remove(idx)
+        if idx in self.neg_indices:
+            self.neg_indices.remove(idx)
                 
         if self.select_val == 1:
-            self.pos_ids.append(idx)
-            self.pos_layer.data = json.loads(self.gdf.loc[self.pos_ids][["geometry"]].to_json())
+            self.pos_indices.append(idx)
+            self.pos_layer.data = json.loads(self.gdf.iloc[self.pos_indices][["geometry"]].to_json())
         elif self.select_val == 0:
-            self.neg_ids.append(idx)
-            self.neg_layer.data = json.loads(self.gdf.loc[self.neg_ids][["geometry"]].to_json())
+            self.neg_indices.append(idx)
+            self.neg_layer.data = json.loads(self.gdf.iloc[self.neg_indices][["geometry"]].to_json())
         else:
-            self.erase_layer.data = json.loads(self.gdf.loc[[idx]][["geometry"]].to_json())
-            self.pos_layer.data = json.loads(self.gdf.loc[self.pos_ids][["geometry"]].to_json())
-            self.neg_layer.data = json.loads(self.gdf.loc[self.neg_ids][["geometry"]].to_json())
+            self.erase_layer.data = json.loads(self.gdf.iloc[[idx]][["geometry"]].to_json())
+            self.pos_layer.data = json.loads(self.gdf.iloc[self.pos_indices][["geometry"]].to_json())
+            self.neg_layer.data = json.loads(self.gdf.iloc[self.neg_indices][["geometry"]].to_json())
 
     def update_layer(self, layer, new_data):
         """Add points to the map for visualization, without changing labels."""
@@ -386,11 +353,36 @@ class GeoLabeler:
         layer.data = new_data
         self.execute_label_point = True
 
-    def get_embeddings_by_tile_ids(self, tile_ids):
-        """Get all embedding columns for given tile IDs from DuckDB."""
-        query = f"""
-        SELECT *
-        FROM embeddings 
-        WHERE tile_id IN ({','.join([f"'{tid}'" for tid in tile_ids])})
+    def add_ee_basemaps(self, geojson_path, start_date, end_date):
+        """Add Earth Engine HSV and RGB median basemaps to this labeler's
+        basemap toggle. The current basemap is left unchanged. Triggers EE
+        initialization and authentication.
+
+        Usage:
+            labeler = GeoLabeler(gdf, geojson_path, ...)
+            labeler.add_ee_basemaps(geojson_path, start_date, end_date)
         """
-        return self.duckdb_connection.execute(query).df()   
+        import shapely
+        import ee
+        from gee import (
+            get_s2_hsv_median,
+            get_s2_rgb_median,
+            get_ee_image_url,
+            initialize_ee_with_credentials,
+        )
+        initialize_ee_with_credentials()
+        boundary = gpd.read_file(geojson_path).geometry.iloc[0]
+        ee_boundary = ee.Geometry(shapely.geometry.mapping(boundary))
+        hsv_median = get_s2_hsv_median(ee_boundary, start_date, end_date)
+        hsv_url = get_ee_image_url(hsv_median, {
+            'min': [0, 0, 0], 'max': [1, 1, 1],
+            'bands': ['hue', 'saturation', 'value']})
+        self.basemap_tiles['HSV_MEDIAN'] = hsv_url
+        self.basemap_attributions['HSV_MEDIAN'] = '© Copernicus via Earth Engine'
+        rgb_median = get_s2_rgb_median(
+            ee_boundary, start_date, end_date, scale_factor=10000)
+        rgb_url = get_ee_image_url(rgb_median, {
+            'min': [0, 0, 0], 'max': [0.25, 0.25, 0.25],
+            'bands': ['B4', 'B3', 'B2']})
+        self.basemap_tiles['RGB_MEDIAN'] = rgb_url
+        self.basemap_attributions['RGB_MEDIAN'] = '© Copernicus via Earth Engine'
