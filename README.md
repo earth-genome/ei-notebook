@@ -51,6 +51,12 @@ The pipeline consists of several steps:
   differences in file paths, nomenclature, and options, but at a high level it's
   conceptually equivalent. It runs out the single notebook `ei_alt_workflow.ipynb`.
 
+There is also a non-interactive pipeline in `automated/`, for the case where you
+already have point locations for the objects of interest and want spatial
+footprints for them. It rebuilds a classifier from those points and merges its
+patch-level detections into polygons, with no labeling step. See
+[automated/README.md](automated/README.md).
+
 ## Pipeline Steps
 
 ### 1. Interactive labeling of examples
