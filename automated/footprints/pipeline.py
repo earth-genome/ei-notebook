@@ -241,7 +241,7 @@ def select_best_round(rounds, tol=RECALL_TOLERANCE):
     round 2 (37.3) and rose to 41.3 by round 4, while reference IoU peaked at
     0.818 on round 2 and fell back to 0.667 -- so the last round was measurably
     not the best, and this rule picks the right one. Validated on three series
-    across two states; see planning.md.
+    across two states; see docs/automated-planning.md.
     """
     best_recall = max(r['recall_trained'] for r in rounds)
     eligible = [r for r in rounds if r['recall_trained'] >= best_recall - tol]

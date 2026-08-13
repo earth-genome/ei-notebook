@@ -362,8 +362,8 @@ result.
 | `--save-unfiltered-polygons` | Not a tool but worth knowing: writes every merged polygon with a `retained` flag, the only route to unlisted facilities. See the ratio guidance under *Assumptions and limitations*. |
 | `review_rejected_positives.py` | Triage a point set against a trained model: which points are mislocated, and by how far, versus which have no signal at all. |
 | `smoke_test.py` | One-command end-to-end check on synthetic data. Builds its DuckDB fixture with the repo's `scripts/build_duck_assets.py`. |
-| `planning.md` | Design decisions, measured results from every experiment, and the reasoning behind the defaults. Read this before changing a default. |
+| [`docs/automated-planning.md`](../docs/automated-planning.md) | Design decisions, measured results from every experiment, and the reasoning behind the defaults. Read this before changing a default. |
 
 Defaults in this pipeline are evidence-based rather than guessed, and
-`planning.md` records the measurements behind each one — including several
+`docs/automated-planning.md` records the measurements behind each one — including several
 plausible-sounding ideas that were built, measured and then removed.
