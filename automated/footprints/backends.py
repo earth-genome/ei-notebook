@@ -197,9 +197,12 @@ class ParquetBackend(EmbeddingBackend):
 class DuckDBBackend(EmbeddingBackend):
     """DuckDB table of embeddings keyed by tile_id, plus a centroids parquet.
 
-    Built by Build-Duck-assets.py. Inference streams a single sequential scan
-    rather than issuing a `WHERE tile_id IN (...)` per batch, which would mean
-    one full table scan per batch.
+    Built by scripts/build_duck_assets.py. Inference streams a single sequential
+    scan rather than issuing a `WHERE tile_id IN (...)` per batch. DuckDB does
+    push that filter down, so a per-batch query is not a full materialization of
+    the table, but it still costs a pass over the id column plus a random-access
+    fetch of the matching rows every time: measured 4-5x slower overall at 384
+    dims, widening as the table grows.
     """
 
     kind = 'duckdb'

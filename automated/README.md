@@ -36,7 +36,7 @@ Build those two assets from embedding parquets with the repo's
 Add `--reference-polygons REF.geojson` if you happen to have existing polygons to
 compare against. You usually won't; everything important works without them.
 
-`python3 automated/smoke_test.py` runs the whole pipeline on a synthetic area in
+`python3 tests/test_footprints_smoke.py` runs the whole pipeline on a synthetic area in
 about a minute and checks 23 invariants. Run it after changing anything.
 
 ## Layout
@@ -361,7 +361,7 @@ result.
 | `evaluate_footprints.py` | Compare footprints against reference polygons. Runs standalone, so it also scores per-round outputs. |
 | `--save-unfiltered-polygons` | Not a tool but worth knowing: writes every merged polygon with a `retained` flag, the only route to unlisted facilities. See the ratio guidance under *Assumptions and limitations*. |
 | `review_rejected_positives.py` | Triage a point set against a trained model: which points are mislocated, and by how far, versus which have no signal at all. |
-| `smoke_test.py` | One-command end-to-end check on synthetic data. Builds its DuckDB fixture with the repo's `scripts/build_duck_assets.py`. |
+| [`tests/test_footprints_smoke.py`](../tests/test_footprints_smoke.py) | One-command end-to-end check on synthetic data. Builds its DuckDB fixture with the repo's `scripts/build_duck_assets.py`. |
 | [`docs/automated-planning.md`](../docs/automated-planning.md) | Design decisions, measured results from every experiment, and the reasoning behind the defaults. Read this before changing a default. |
 
 Defaults in this pipeline are evidence-based rather than guessed, and

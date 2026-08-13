@@ -107,8 +107,13 @@ class EmbeddingBackend:
 - `iter_all`: **`con.execute("SELECT tile_id, * FROM embeddings").fetch_record_batch(batch_size)`
   — a single sequential scan**, mapping `tile_id` -> centroid row via a dict
   built once. This replaces `duckdb_ml_utils.get_vectors`'s
-  `WHERE tile_id IN (10k-tuple)` per batch, which is a full table scan per batch
-  (1,468 scans of a 6 GB table for the full AOI).
+  `WHERE tile_id IN (10k-tuple)` per batch (1,468 queries against a 6 GB table
+  for the full AOI). Measured 2026-08-13 on a persisted file at 384 dims,
+  `batch_size=10,000`: streaming is **4-5x faster**, and the margin widens with
+  table size (the per-batch query costs 85 ms at 100k rows, 104 ms at 800k).
+  Note this is a large constant factor, not the quadratic blowup first assumed:
+  DuckDB pushes the `IN` filter down, so a per-batch query is not a full
+  materialization of the table.
 - Verifies `COUNT(*)` against `len(centroids)` and warns on mismatch.
 
 Selection: `--embeddings PATH.parquet` picks the parquet backend;
@@ -881,7 +886,7 @@ computed.
 | `automated/footprints/` | The stages, one module each: `backends` (streaming parquet/DuckDB access), `geometry`, `labels`, `modeling` (classifier, out-of-fold probabilities, threshold, curves), `inference` (full-AOI pass, patches to polygons), `pipeline` (one train-infer-filter pass and the mining/admission loops), `assessment`, `reporting`, `util`. Dependencies run one way, `util` -> stages -> `pipeline` -> CLI. |
 | `automated/evaluate_footprints.py` | Step 7b. Compares predicted footprints to reference polygons: correspondence counts in both directions, best-match and fragmentation-robust union IoU, matching-free global IoU, coverage vs excess, plus QGIS layers for missed references, novel polygons and per-polygon IoU. **Runnable standalone**, which is how per-round footprints get scored: `python3 evaluate_footprints.py --footprints X_round1_footprints.geojson --reference REF.geojson --outdir . --tag r1`. |
 | `automated/review_rejected_positives.py` | Triages a point set against a trained probe, scoring every patch within 3 x stride to separate **mislocated** (own patch low, neighbour high -- reports the east/north offset to drag the point) from **no_signal** (nothing nearby scores; wrong location, not a facility, or invisible in the imagery behind these embeddings). Takes any run's `_model.joblib` as the judge -- use a model trained on *clean* positives so it is not grading its own training data. This is what identified the address-derived points in both states. |
-| `automated/smoke_test.py` | One-command end-to-end check, ~1 minute, 23 assertions. Builds a synthetic AOI matching the real grid structure (50%-overlapping 320 m patches on a 160 m stride, 384 uint8 features) with planted facilities **and confusable decoys**, so hard-negative mining is actually exercised rather than early-stopping. Asserts outputs exist, all trained positives recovered, assessment passes, gate excludes nothing on clean data, rounds run, `--select-round` obeys, and **the parquet and DuckDB backends agree exactly**. Run it after changing any default. |
+| `tests/test_footprints_smoke.py` | One-command end-to-end check, ~1 minute, 23 assertions. Builds a synthetic AOI matching the real grid structure (50%-overlapping 320 m patches on a 160 m stride, 384 uint8 features) with planted facilities **and confusable decoys**, so hard-negative mining is actually exercised rather than early-stopping. Asserts outputs exist, all trained positives recovered, assessment passes, gate excludes nothing on clean data, rounds run, `--select-round` obeys, and **the parquet and DuckDB backends agree exactly**. Run it after changing any default. |
 | `scripts/build_duck_assets.py` | Converts embeddings parquets to DuckDB + centroids parquet. Shared with the interactive workflow; replaces the `Build-Duck-assets.py` used during development, which had the same CLI. |
 | `src/*.py`, `*.ipynb` | The interactive notebook workflows, including the one this automates. Not imported here, and not to be edited from this side. |
 
@@ -1359,7 +1364,7 @@ time here.
 - **Do not run two jobs against the same DuckDB file concurrently.** Measured: two
   parallel scans dropped to 93-104k patches/s each, i.e. *less combined* than one
   run alone at 290k. Run them sequentially.
-- **`smoke_test.py` is self-contained** -- it generates its own fixture, because an
+- **The smoke test is self-contained** -- it generates its own fixture, because an
   earlier fixture living in a scratchpad got wiped mid-session. Run it after
   changing any default; it catches the invariants that have actually broken.
 - **Comparing runs**: always compare each run at *its own selected round*. Runs in

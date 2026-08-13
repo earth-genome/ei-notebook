@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test for build_footprints.py. Run it after changing defaults.
+"""End-to-end smoke test for automated/build_footprints.py.
 
-    python3 smoke_test.py            # ~1 minute
-    python3 smoke_test.py --keep      # leave the working directory for inspection
+Run it after changing defaults.
+
+    python3 tests/test_footprints_smoke.py         # ~1 minute
+    python3 tests/test_footprints_smoke.py --keep  # keep the working directory
 
 Builds a small synthetic AOI whose structure matches the real embedding data --
 50%-overlapping ~320 m patches on a 160 m stride, 384 uint8 features -- with
@@ -30,10 +32,10 @@ import subprocess
 import sys
 import tempfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-BUILD = os.path.join(HERE, 'build_footprints.py')
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
+BUILD = os.path.join(ROOT, 'automated', 'build_footprints.py')
 # The repo's asset builder, shared with the interactive workflow.
-DUCK = os.path.join(HERE, os.pardir, 'scripts', 'build_duck_assets.py')
+DUCK = os.path.join(ROOT, 'scripts', 'build_duck_assets.py')
 
 FIXTURE = r'''
 import numpy as np, geopandas as gpd, shapely, pyarrow as pa
