@@ -180,3 +180,8 @@ cython_debug/
 # Derived geojson, regenerable, and may carry input provenance. Keep out of a
 # public repo.
 runs/
+
+docs/*planning*html
+docs/*planning*_files
+automated/README.html
+automated/README_files

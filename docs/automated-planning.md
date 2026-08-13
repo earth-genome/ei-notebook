@@ -894,6 +894,61 @@ Run outputs (`runs-key-*/`, and the working runs behind the tables below) stayed
 in the development folder outside this repo; the paths quoted in this document
 refer to those.
 
+## Reproducing the tested runs
+
+None of the inputs or outputs behind the tables below are in this repo, and they
+should not be: this repo is public, the point sets are client data carrying asset
+identifiers at exact coordinates, and the reference polygons are a prior client
+deliverable. The embeddings are multi-GB besides. What follows is enough to
+reconstruct any run from archived assets.
+
+**Embeddings** are in an Earth Genome GCS bucket, DINO ViT-small patch16
+quantized: one deduplicated parquet per region, named by region and date range,
+including one each for Kansas and New Mexico. Ask internally for the location --
+deliberately not written down here. Convert a parquet to the DuckDB pair with
+`scripts/build_duck_assets.py`; the runs below used the parquet backend for
+Kansas and DuckDB for New Mexico, which give identical results (verified to
+0.000000 ha symmetric difference).
+
+**Point sets, boundaries and reference polygons** are archived with the client
+data, not here, under the filenames the commands name. Boundaries are GADM
+state polygons. The `_with_source` point sets are the client's full registers
+with the `source` provenance field; New Mexico's reference polygons are the
+cleaned output of earlier modelling work, not ground truth.
+
+**The six key runs** were, from the development folder, at the defaults of
+2026-08-13:
+
+    build_footprints.py --positives USA_KS1371_with_source.geojson \
+        --embeddings 20230101-20240101_USA_Kansas-deduped.parquet \
+        --boundary usa_kansas.geojson \
+        --reference-polygons USA_KS1133_2025-05-02.geojson \
+        --outdir runs --save-unfiltered-polygons --save-round-outputs \
+        --tag key_ks_seeded --trusted-source ei --seed-rounds 2
+
+    # ... and with --tag key_ks_cvgate (no cleaning flags), and with
+    # --tag key_ks_noclean --drop-positives-below 0
+
+    build_footprints.py --positives USA_NM591_with_source.geojson \
+        --centroids NMcentroids.parquet --duckdb NMembeddings.db \
+        --boundary usa_new_mexico.geojson \
+        --reference-polygons USA_NM_t0.75_2025-08-16T14_36cleaned.geojson \
+        --outdir runs --save-unfiltered-polygons --save-round-outputs \
+        --tag key_nm_seeded --trusted-source ei --seed-rounds 2
+
+    # ... and the matching key_nm_cvgate and key_nm_noclean variants
+
+Each run's `_config.txt` records its full command line plus a byte count and
+partial sha1 for every input, so an archived config identifies exactly which
+version of a point set produced a given number here. Those config, stats, eval
+and curve files (about 1 MB for all six runs) are archived separately from the
+repo; the ~190 MB of geojson they came with is regenerable and was not kept.
+
+One caveat on re-running: defaults have moved during development, so a bare
+re-run today reproduces today's defaults, not necessarily the numbers below.
+Diff the archived `_config.txt` against a new one before concluding anything has
+changed.
+
 ## Key runs, matched comparison (2026-08-13) -- `runs-key-2026-08-13/`
 
 Six runs, both AOIs x three cleaning strategies, all on the client's full point
