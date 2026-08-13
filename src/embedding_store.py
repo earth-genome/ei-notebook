@@ -24,6 +24,27 @@ import numpy as np
 import pandas as pd
 
 
+def _require_ids_present(requested, found, source: str) -> None:
+    """Raise if any requested id is absent from the store.
+
+    Without this, reindexing to the requested ids turns a missing id into a row
+    of NaN, which surfaces later as an opaque failure inside the model -- or not
+    at all, if something imputes on the way.
+    """
+    requested = pd.Index(requested)
+    missing_mask = ~requested.isin(pd.Index(found))
+    if not missing_mask.any():
+        return
+    missing = requested[missing_mask].unique()
+    examples = ", ".join(repr(m) for m in missing[:5])
+    if len(missing) > 5:
+        examples += ", ..."
+    raise KeyError(
+        f"{len(missing)} requested id(s) are not in {source}: {examples}. "
+        "The centroids and the embedding store are out of sync."
+    )
+
+
 class VectorStore(Protocol):
     """Protocol for id -> embedding vectors. Rows returned in same order as ids."""
 
@@ -47,8 +68,19 @@ class InMemoryVectorStore:
         self, ids: Union[pd.Series, pd.Index, list, np.ndarray]
     ) -> pd.DataFrame:
         ids = pd.Index(ids) if not isinstance(ids, (pd.Series, pd.Index)) else ids
+        _require_ids_present(ids, self._df.index, "the embedding table")
         out = self._df.reindex(ids)
         return out.reset_index(drop=True)
+
+    def iter_all(self, batch_size: int = 200_000):
+        """Yield (ids, vectors) over the whole store, in storage order.
+
+        For scanning every vector once -- see DuckDBVectorStore.iter_all for why
+        this exists rather than looping over get_vectors().
+        """
+        for start in range(0, len(self._df), batch_size):
+            chunk = self._df.iloc[start:start + batch_size]
+            yield chunk.index.to_numpy(), chunk.reset_index(drop=True)
 
 
 class DuckDBVectorStore:
@@ -75,7 +107,10 @@ class DuckDBVectorStore:
             return df.drop(columns=[self._id_column], errors="ignore")
         def _quote(tid):
             if isinstance(tid, str):
-                return f"'{tid}'"
+                # Double any single quote, else an id containing one ends the
+                # string literal and the query fails to parse.
+                escaped = tid.replace("'", "''")
+                return f"'{escaped}'"
             return str(int(tid))
         placeholders = ", ".join(_quote(tid) for tid in ids_full)
         query = f"""
@@ -84,10 +119,58 @@ class DuckDBVectorStore:
         """
         df = self._con.execute(query).fetchdf()
         ids_from_db = df[self._id_column].values
+        _require_ids_present(
+            ids_full, ids_from_db, f"DuckDB table '{self._table_name}'"
+        )
         df = df.drop(columns=[self._id_column], errors="ignore")
         df.index = ids_from_db
         df = df.reindex(ids_full)
         return df.reset_index(drop=True)
+
+    def _embedding_columns(self) -> list[str]:
+        """Table columns except the id column, in table order.
+
+        Matches the column order that get_vectors returns via SELECT *, so a
+        model fitted on one can be applied to the other.
+        """
+        cols = [r[0] for r in
+                self._con.execute(f"DESCRIBE {self._table_name}").fetchall()]
+        return [c for c in cols if c != self._id_column]
+
+    def iter_all(self, batch_size: int = 200_000):
+        """Yield (ids, vectors) over the whole table in one sequential scan.
+
+        For covering the whole table, this is the cheap path. Looping over
+        get_vectors() instead pays, per batch, a pass over the id column plus a
+        random-access fetch of the matching rows; measured on a persisted file at
+        384 dims and batch_size=10,000 that is 4-5x slower overall, and the
+        per-batch cost itself creeps up with table size (85ms at 100k rows,
+        104ms at 800k), so the gap widens as the AOI grows.
+
+        Vectors come back as a DataFrame with the same columns, in the same
+        order, as get_vectors() returns. All non-id columns must be numeric.
+        """
+        cols = self._embedding_columns()
+        select = ", ".join(f'"{c}"' for c in cols)
+        result = self._con.execute(
+            f'SELECT "{self._id_column}", {select} FROM {self._table_name}'
+        )
+        # to_arrow_reader is current; fetch_record_batch is deprecated in duckdb
+        # 1.5 but is the only one present in older versions.
+        reader = (result.to_arrow_reader(batch_size)
+                  if hasattr(result, "to_arrow_reader")
+                  else result.fetch_record_batch(batch_size))
+        for batch in reader:
+            # Column-wise to_numpy is zero-copy for null-free numeric Arrow
+            # columns; to_pydict/to_pandas would be an order of magnitude slower
+            # at 384 columns.
+            ids = batch.column(0).to_numpy(zero_copy_only=False)
+            arr = np.stack(
+                [batch.column(i + 1).to_numpy(zero_copy_only=False)
+                 for i in range(len(cols))],
+                axis=1,
+            )
+            yield ids, pd.DataFrame(arr, columns=cols, copy=False)
 
 
 class EmbeddingMapper:
@@ -125,6 +208,14 @@ class EmbeddingMapper:
     ) -> pd.DataFrame:
         """Return embedding vectors for the given ids (order preserved)."""
         return self._store.get_vectors(ids)
+
+    def iter_all(self, batch_size: int = 200_000):
+        """Yield (ids, vectors) over the whole store in one pass, if supported.
+
+        Raises AttributeError for stores that do not implement it, so callers can
+        fall back to get_vectors().
+        """
+        return self._store.iter_all(batch_size)
 
 
 def from_parquet(

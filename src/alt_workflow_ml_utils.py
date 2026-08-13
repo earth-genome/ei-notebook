@@ -113,21 +113,49 @@ def get_detections(embeddings, model, threshold, boundary_path=None, batch_size=
     gdf = embeddings.gdf
     id_column = embeddings.id_column
     n = len(gdf)
-    n_batches = math.ceil(n / batch_size)
     detections_list = []
-    for i in range(n_batches):
-        start = i * batch_size
-        end = min((i + 1) * batch_size, n)
-        batch_positions = np.arange(start, end)
-        ids = gdf[id_column].iloc[batch_positions]
-        X = embeddings.get_vectors(ids)
-        probs, y_pred = predict(X, model, threshold)
-        mask = y_pred.astype(bool)
-        if not mask.any():
-            continue
-        out = gdf.iloc[batch_positions[mask]].copy()
-        out["probability"] = probs[mask]
-        detections_list.append(out)
+
+    try:
+        stream = embeddings.iter_all(batch_size)
+    except AttributeError:
+        stream = None
+
+    if stream is not None:
+        # One sequential pass over the store. Looping over get_vectors() instead
+        # re-filters the id column per batch on the DuckDB backend; measured
+        # 4-5x slower at 384 dims, widening with table size.
+        positions = pd.Index(gdf[id_column])
+        for ids, X in stream:
+            probs, y_pred = predict(X, model, threshold)
+            mask = y_pred.astype(bool)
+            if not mask.any():
+                continue
+            rows = positions.get_indexer(np.asarray(ids)[mask])
+            if (rows < 0).any():
+                raise ValueError(
+                    f"{int((rows < 0).sum())} ids from the vector store are not "
+                    f"in the centroid gdf (e.g. "
+                    f"{np.asarray(ids)[mask][rows < 0][:3]}); the two are out of "
+                    "sync."
+                )
+            out = gdf.iloc[rows].copy()
+            out["probability"] = probs[mask]
+            detections_list.append(out)
+    else:
+        n_batches = math.ceil(n / batch_size)
+        for i in range(n_batches):
+            start = i * batch_size
+            end = min((i + 1) * batch_size, n)
+            batch_positions = np.arange(start, end)
+            ids = gdf[id_column].iloc[batch_positions]
+            X = embeddings.get_vectors(ids)
+            probs, y_pred = predict(X, model, threshold)
+            mask = y_pred.astype(bool)
+            if not mask.any():
+                continue
+            out = gdf.iloc[batch_positions[mask]].copy()
+            out["probability"] = probs[mask]
+            detections_list.append(out)
     if not detections_list:
         empty = gdf.iloc[0:0].copy()
         empty["probability"] = pd.Series(dtype=float)
