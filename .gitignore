@@ -175,3 +175,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Pipeline run outputs (automated/build_footprints.py --outdir, default "runs").
+# Derived geojson, regenerable, and may carry input provenance. Keep out of a
+# public repo.
+runs/
