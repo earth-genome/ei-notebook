@@ -1329,6 +1329,34 @@ subtracting known exclusions, because several mechanisms can remove a positive
 (label gate, seeded admission) and any future one would be missed. A smoke-test
 assertion fails on any recall above 100%.
 
+### SETTLED: the CV gate belongs after admission, and must not be restricted to
+### admitted points
+
+The open question was whether the cross-validated gate is redundant once seeded
+admission has vetted the untrusted points -- and so whether it should run before
+admission, or skip admitted points. It should do neither. The two mechanisms are
+complementary: **the gate's main catch is in the trusted seed, which admission
+structurally cannot examine**, since trusted points bypass it by definition.
+
+Every seeded run shows the same thing. Excluded positives by provenance, from
+each run's `_positives_excluded.geojson`:
+
+| run | trusted seed | gate excluded | of which trusted | trusted share |
+|---|---|---|---|---|
+| `key_ks_seeded` | 1,019 `ei` | 19 | 16 `ei` | 84% |
+| `key_nm_seeded` | 427 `ei` | 12 | 10 `ei` | 83% |
+| `nm_seeded`, `nm_seeded2/3`, `nm_seeded_r1` | 427 `ei` | 11-12 | 9-10 `ei` | 82-83% |
+| `ks_seeded_eirsl` | 1,123 `ei,rsl` | 12 | 7 `ei` + 2 `rsl` | 75% |
+| `wy_seeded` (2026-08-14) | 209 `ei` | 14 | 11 `ei` | 79% |
+
+75-84% of gate exclusions are trusted points, across three AOIs and both
+trusted-source configurations. Even a hand-picked provenance carries a minority
+of positives the imagery does not support, and the gate is what finds them.
+Moving it earlier, or exempting admitted points, would discard that.
+
+Corollary for reading a run: a seeded run whose gate excludes *mostly untrusted*
+points is anomalous and worth investigating, since it inverts the usual pattern.
+
 ## IMPLEMENTED: automatic "this run probably failed" warnings
 
 New Mexico reported **100% of positives re-detected and 98.2% of references
