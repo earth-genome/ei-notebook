@@ -57,15 +57,92 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 
 ---
 
-### 2. ui.py (GeoLabeler)
+### 2. ui.py (GeoLabeler refactor)
 
-- **pos_indices / neg_indices:** Keep storing **positions** (results of `sindex.nearest`), as in the previous diagnosis.
-- **Layer updates and save:** Use **`.iloc`** when indexing into `self.gdf` (e.g. `self.gdf.iloc[self.pos_indices][["geometry"]]`, and same for neg and for `save_dataset`).
-- So the only change here is the loc → iloc fix; no need to change how the labeler gets its gdf from the mapper. With range index, positions are 0..n-1 and iloc is correct.
+**EmbeddingMapper relocation**
+
+- `EmbeddingMapper` now lives in `embedding_store.py` (see §1). `ui.py` imports it only indirectly through notebooks; the labeler receives a centroid `gdf`, not a DuckDB connection or Annoy index.
+
+**GeoLabeler constructor**
+
+- Signature: `GeoLabeler(gdf, geojson_path, custom_baselayer_url=None, custom_attribution=None, save_dir=None)`.
+- `gdf`: centroid GeoDataFrame (typically `embeddings.gdf` from an `EmbeddingMapper`).
+- `geojson_path`: AOI boundary drawn on the map; initial viewport is fit to this boundary.
+- `custom_baselayer_url`: optional tile URL added as a `CUSTOM` basemap entry in the toggle queue.
+- `save_dir`: directory for GeoJSON exports from `save_dataset()` (default: current working directory).
+- Default basemap is **GOOGLE_HYBRID** (Maptiler, Google Hybrid, and Mapbox are always available via toggle).
+
+**pos_indices / neg_indices and iloc**
+
+- Store **positions** (results of `sindex.nearest`), not id values.
+- Layer updates and save use **`.iloc`** (e.g. `self.gdf.iloc[self.pos_indices][["geometry"]]`).
+- `save_dataset(b=None)` is callable from the notebook without a button click.
+
+**add_ee_basemaps (opt-in)**
+
+- EE basemaps are **not** created in `__init__`. Call `labeler.add_ee_basemaps(geojson_path, start_date, end_date)` to append `HSV_MEDIAN` and `RGB_MEDIAN` to the basemap toggle queue. This triggers Earth Engine initialization and authentication. The current basemap is left unchanged until the user toggles.
 
 ---
 
-### 3. Annoy and notebooks
+### 3. scripts/build_duck_assets.py
+
+Builds out-of-memory DuckDB assets from one or more embedding parquet files.
+
+**CLI**
+
+```
+python scripts/build_duck_assets.py PARQUET [PARQUET ...] \
+  [--clip_path GEOJSON] \
+  [--db_path embeddings.db] \
+  [--table_name embeddings] \
+  [--centroids_path centroids.parquet] \
+  [--id_column tile_id] \
+  [--geometry_col geometry]
+```
+
+**Requirements**
+
+- Every parquet must contain `id_column` (default `tile_id`) and `geometry_col` (default `geometry`). The id column is **required** for deduplication across overlapping regions.
+- Optional `--clip_path` clips each parquet to a boundary before insert.
+
+**Outputs**
+
+- `embeddings.db` with a table of id + embedding columns (geometry stripped).
+- `centroids.parquet` with id column and centroid geometry (written as a GeoDataFrame).
+
+These outputs feed `embedding_store.from_duckdb()` in `duckdb_ei.ipynb` or `ei_alt_workflow.ipynb`.
+
+---
+
+### 4. src/alt_workflow_ml_utils.py
+
+ML and validation helpers used by `ei_alt_workflow.ipynb`. All functions expect an `EmbeddingMapper` with `.gdf`, `.get_vectors(ids)`, and `.id_column`.
+
+| Function | Purpose |
+|----------|---------|
+| `predict(X, model, threshold=0.5)` | Binary inference from feature matrix |
+| `predict_df(df, embeddings, model, threshold=0.5)` | Inference on labeled points; resolves ids via `embeddings.id_column` |
+| `score(y_pred, y_true)` | Prints accuracy, precision, recall, confusion matrix |
+| `f1_curve`, `prec_rec_curve`, `roc_curve` | Threshold / validation plots |
+| `get_detections(embeddings, model, threshold, boundary_path=None, batch_size=10000)` | Run model over all centroids; returns GeoDataFrame with id column, geometry, and `probability` |
+| `detections_to_rectpolys(embeddings, detections, patch_width=320, ...)` | Merge point detections into polygons with mean confidence |
+
+**get_detections batching**
+
+- Iterates over `embeddings.gdf` by **range-index positions** in batches of `batch_size`.
+- Converts each batch to ids via `gdf[id_column].iloc[batch_positions]`, then calls `get_vectors(ids)`.
+- Returns an empty GeoDataFrame (with `probability` column) when no tiles exceed the threshold.
+
+**detections_to_rectpolys buffering**
+
+- Builds axis-aligned squares in **EPSG:4326** by converting `patch_width` meters to degrees at the centroid of `embeddings.gdf` bounds (not UTM).
+- Merges boxes with a small degree-based buffer, then assigns polygon confidence as the mean of overlapping detection probabilities.
+
+Default prediction threshold is **0.5** throughout.
+
+---
+
+### 5. Annoy and notebooks
 
 - Annoy item ids are 0..n-1 (row order) → **positions**.
 - When you get nearest items from Annoy, you get positions. To call `get_vectors(...)` you need **ids**: `ids = embeddings.gdf[embeddings.id_column].iloc[positions]`, then `get_vectors(ids)`.
@@ -73,14 +150,14 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 
 ---
 
-### 4. ml_utils and other callers
+### 6. ml_utils and other callers
 
-- **predict_df / get_detections / detections_to_rectpolys:** They use `embeddings.id_column` to find the "id" column in DataFrames. That column will still hold id values (tile_id or ordinal); it's just that the **mapper's gdf** now has those ids in a column instead of in the index. So they keep using the same column name; no conceptual change.
-- Any code that does **index-based** access on `embeddings.gdf` (e.g. `gdf.loc[some_id]`) would need to switch to "id column" semantics, e.g. `gdf[gdf[id_column] == some_id]` or a small helper, if such usage exists.
+- **predict_df / get_detections / detections_to_rectpolys:** Implemented in `alt_workflow_ml_utils.py` (see §4). They use `embeddings.id_column` to find the id column in DataFrames; the mapper's gdf holds ids in a column, not the index.
+- Any code that does **index-based** access on `embeddings.gdf` (e.g. `gdf.loc[some_id]`) should use id-column semantics: `gdf[gdf[id_column] == some_id]`.
 
 ---
 
-### 5. Summary table
+### 7. Summary table
 
 | Component              | Current (id as index)     | After (range index + id column)                    |
 |------------------------|---------------------------|----------------------------------------------------|
@@ -95,7 +172,7 @@ This note outlines reverting to a **range index everywhere** and keeping **id_co
 
 ---
 
-### 6. Why this resolves the clash
+### 8. Why this resolves the clash
 
 - **Positional use (sindex, Annoy, GeoLabeler):** All use integer positions 0..n-1; `gdf.iloc[positions]` is always correct.
 - **Id-based use (DuckDB, get_vectors, saving by tile_id):** All use the **column** `id_column`; no dependence on the index.
