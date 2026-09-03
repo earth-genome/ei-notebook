@@ -49,20 +49,22 @@ The pipeline consists of several steps:
 **Note that there is an alternate workflow that exposes more of the machine
   learning to the user, making it more customizable. It has some
   differences in file paths, nomenclature, and options, but at a high level it's
-  conceptually equivalent. It runs out the single notebook `ei_alt_workflow.ipynb`.
+  conceptually equivalent. See [Alternate workflow](#alternate-workflow) below.
 
 ## Pipeline Steps
 
 ### 1. Interactive labeling of examples
 The Geolabeler provides an interactive map interface for labeling geographic points. Key features:
 
-- Interactive map with multiple basemap options (Maptiler satellite, RGB/HSV median composite, Google Hybrid). **Please note that the RGB/HSV are generated on the fly from GEE. The dates for this imagery should be set using the config.**
+- Interactive map with multiple basemap options (Maptiler satellite, Google Hybrid, Mapbox). The default basemap is **Google Hybrid**. A basemap toggle cycles through available options.
+- Optional Earth Engine basemaps (RGB/HSV median composite) via `labeler.add_ee_basemaps(geojson_path, start_date, end_date)` after creating the labeler. EE basemaps are **not** built automatically from the config; call this method only if you want them (requires Earth Engine authentication).
+- Optional custom basemap via the `custom_baselayer_url` constructor argument.
 - Point and lasso selection modes for efficient labeling
 - Positive/negative/erase labeling options
 - Direct Google Maps linking for reference
-- Automatic saving of labeled points as GeoJSON files
+- Automatic saving of labeled points as GeoJSON files in `save_dir` (defaults to the current working directory)
 
-To launch the labeling interface, first set up your `config` file. An example is provided at `./config/ui_config.json`. Next, run the `duckdb_ei.ipynb` cells. This will allow the user to search in the AOI by performing similarity serarch in the embeddings using a supplied `annoy` index. Please use the python environment you set up earlier to run the notebook.
+To launch the labeling interface, first set up your `config` file. An example is provided at `./config/ui_config.json`. Next, run the `duckdb_ei.ipynb` cells. The notebook loads embeddings through `embedding_store.from_duckdb()` (centroid parquet + DuckDB connection) and passes `embeddings.gdf` to `GeoLabeler`; DuckDB is no longer wired into the labeler constructor. This will allow the user to search in the AOI by performing similarity search in the embeddings using a supplied `annoy` index. Please use the python environment you set up earlier to run the notebook.
 
 The outputs of this step will be a `parquet` of positive samples (and optionally negative samples) with the tile ID of the closest tile centroid as an identifier.
 
@@ -226,6 +228,30 @@ python src/postprocess_detections.py \
 
 ### 6. Iterate!
 You should now be able to return the interactive notebook, load in the new detections and iterate on mapping.
+
+## Alternate workflow
+
+The notebook `ei_alt_workflow.ipynb` exposes more of the machine learning pipeline
+in one place. Use it when you want to train and evaluate models interactively
+(e.g. logistic regression or MLP) and run inference over all embedding centroids
+without stepping through the standalone scripts in steps 2–5 above.
+
+**When to use which workflow**
+
+| | `duckdb_ei.ipynb` + scripts | `ei_alt_workflow.ipynb` |
+|---|---|---|
+| Labeling + Annoy search | Yes | Yes |
+| Negative sampling via LULC script | Yes | Manual / in-notebook |
+| Training | `tile_classifier.py` (XGBoost) | In-notebook (sklearn models via `alt_workflow_ml_utils`) |
+| Full-tile inference | `tile_classifier.py` | `ml_utils.get_detections()` |
+| Postprocess to polygons | `postprocess_detections.py` | `ml_utils.detections_to_rectpolys()` |
+
+**Embedding inputs.** The alt workflow accepts either:
+
+1. **Single parquet** — one GeoDataFrame with geometry, an id column (e.g. `tile_id`), and embedding columns. Build the mapper with `embedding_store.from_dataframe()`.
+2. **DuckDB assets** — a centroids parquet plus an `embeddings.db` table (same layout as the main workflow). Build the mapper with `embedding_store.from_duckdb()`. To create these assets from raw embedding parquets, run `scripts/build_duck_assets.py` (see `docs/design/planning.md`).
+
+**Notebook outline.** After loading embeddings, the notebook covers: interactive labeling with `GeoLabeler`, Annoy-based similarity search, train/test split and model training, validation curves (`predict_df`, `score`, `f1_curve`, `prec_rec_curve`, `roc_curve`), full- AOI inference (`get_detections`), and polygon export (`detections_to_rectpolys`). All ML helpers live in `src/alt_workflow_ml_utils.py`.
 
 
 
