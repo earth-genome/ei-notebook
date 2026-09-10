@@ -17,7 +17,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from sklearn.neural_network import MLPClassifier
 
-from .util import log, warn
+from .util import log
 
 
 def make_model(args):
@@ -31,16 +31,43 @@ def make_model(args):
                          n_iter_no_change=40, random_state=args.seed)
 
 
+_CONVERGENCE = {'fits': 0, 'failed': 0, 'max_iter': None}
+
+
 def _fit(model, X, y):
-    """Fit, converting warnings about non-convergence into recorded warnings."""
+    """Fit, tallying non-convergence rather than echoing it.
+
+    A run fits the model ~7 times (seed rounds, then once per mining round,
+    plus cross-validation folds), and sklearn's ConvergenceWarning is nine
+    lines of boilerplate each time. Emitted individually they crowded out the
+    rest of the warnings block, so they are counted here and reported once by
+    convergence_summary().
+    """
     import warnings as _warnings
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter('always', ConvergenceWarning)
         model.fit(X, y)
-        for c in caught:
-            if issubclass(c.category, ConvergenceWarning):
-                warn(f'Solver did not converge: {c.message}')
+    _CONVERGENCE['fits'] += 1
+    if any(issubclass(c.category, ConvergenceWarning) for c in caught):
+        _CONVERGENCE['failed'] += 1
+        _CONVERGENCE['max_iter'] = getattr(model, 'max_iter', None)
     return model
+
+
+def convergence_summary():
+    """One line on solver convergence for the warnings block, or None.
+
+    Returns None when every fit converged, so a clean run says nothing at all
+    and the line means something when it does appear.
+    """
+    c = _CONVERGENCE
+    if not c['failed']:
+        return None
+    return (f"Solver hit the iteration cap in {c['failed']} of {c['fits']} "
+            f"model fits (--max-iter {c['max_iter']}): those coefficients are "
+            f"where the optimiser stopped, not the optimum. Deterministic, so "
+            f"runs still reproduce. Raise --max-iter to test whether results "
+            f"depend on it.")
 
 
 def oof_probabilities(X, y, args):

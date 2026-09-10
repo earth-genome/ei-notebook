@@ -64,7 +64,8 @@ from footprints.geometry import (boundary_mask, build_squares,  # noqa: E402
                                 choose_metric_crs, detect_stride, project)
 from footprints.labels import (load_points, sample_negatives,  # noqa: E402
                                snap_positives)
-from footprints.modeling import fbeta_curve_fig, pr_curve_fig  # noqa: E402
+from footprints.modeling import (convergence_summary,  # noqa: E402
+                                 fbeta_curve_fig, pr_curve_fig)
 from footprints.pipeline import (detect_and_filter, label_metrics,  # noqa: E402
                                  mine_hard_negatives, seeded_admission,
                                  select_best_round, train_model)
@@ -668,6 +669,11 @@ def main(args):
                  'feature_columns': backend.feature_cols,
                  'metric_crs': ctx['metric_crs']}, model_path)
     written.append(model_path)
+
+    # One line for the whole run, rather than sklearn's boilerplate per fit.
+    convergence = convergence_summary()
+    if convergence:
+        warn(convergence)
 
     stats_path = os.path.join(args.outdir, f'{basename}_stats.txt')
     write_stats(stats_path, args, backend, ctx)
