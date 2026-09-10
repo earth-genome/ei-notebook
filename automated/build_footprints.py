@@ -625,6 +625,28 @@ def main(args):
         to_file(excluded, 'positives_excluded')
         ctx['n_excluded_redetected'] = int(matched_pos[drop].sum())
 
+    # Positives with no footprint under the emitted solution -- the
+    # client-facing "which of my facilities did not get one".
+    if (~matched_pos).any():
+        uncovered = pos[~matched_pos].copy()
+        missed_positions = pos_positions[~matched_pos]
+        excluded_positions = set(lq.get('excluded_positions', []))
+        uncovered['excluded_from_training'] = [
+            p in excluded_positions for p in missed_positions]
+        oof_of = dict(zip(label_positions.tolist(), oof.tolist()))
+        oof_of.update(zip(lq.get('excluded_positions', []),
+                          lq.get('excluded_oof', [])))
+        uncovered['oof_probability'] = [oof_of.get(p) for p in missed_positions]
+        if len(kept_polys):
+            # Distance separates a near miss, worth a look at --match-tol-m or
+            # --gap-close-m, from a point with nothing detected anywhere near.
+            geom = uncovered.geometry.to_numpy()
+            nearest = shapely.STRtree(kept_polys).nearest(geom)
+            uncovered['dist_to_footprint_m'] = np.round(
+                shapely.distance(geom, kept_polys[nearest]), 1)
+        to_file(uncovered, 'positives_uncovered')
+    ctx['n_uncovered'] = int((~matched_pos).sum())
+
     if args.save_unfiltered_polygons:
         # Every merged polygon, including those no known positive lands on.
         # Written alongside the filtered footprints rather than replacing them:
