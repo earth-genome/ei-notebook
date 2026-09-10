@@ -630,9 +630,23 @@ def main(args):
     if (~matched_pos).any():
         uncovered = pos[~matched_pos].copy()
         missed_positions = pos_positions[~matched_pos]
-        excluded_positions = set(lq.get('excluded_positions', []))
+        # Membership is derived from the final labelled set, not by subtracting
+        # any one mechanism's exclusions -- the gate and seeded admission both
+        # remove positives, and a future third would be missed. Same reasoning
+        # as the definition of recall(trained).
+        trained_positions = set(label_positions[y == 1].tolist())
         uncovered['excluded_from_training'] = [
-            p in excluded_positions for p in missed_positions]
+            p not in trained_positions for p in missed_positions]
+        # Best-effort attribution of which mechanism dropped it. An empty
+        # value alongside excluded_from_training=True means some mechanism
+        # removed the point that this attribution does not know about.
+        gate_positions = set(lq.get('excluded_positions', []))
+        adm_positions = set(ctx.get('admission', {})
+                            .get('excluded_positions', []))
+        uncovered['excluded_by'] = [
+            'gate' if p in gate_positions else
+            'admission' if p in adm_positions else ''
+            for p in missed_positions]
         oof_of = dict(zip(label_positions.tolist(), oof.tolist()))
         oof_of.update(zip(lq.get('excluded_positions', []),
                           lq.get('excluded_oof', [])))
