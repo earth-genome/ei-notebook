@@ -184,7 +184,9 @@ def main(args):
         n_neg_target = int(round(args.neg_ratio * ctx['n_pos_patches']))
         # A ratio alone under-samples the background when the positive set is
         # small relative to the AOI: 10:1 on 50 points is 500 negatives for a
-        # whole state. The floor scales with the area actually being searched.
+        # whole state. The floor scales with the number of patches actually
+        # searched, not with ground area, so fetching embeddings for only part
+        # of a region scales it down to match without touching the flag.
         floor = int(round(args.min_negatives_per_million
                           * ctx['n_work'] / 1e6))
         if n_neg_target < floor:
@@ -885,7 +887,9 @@ def parse_args(argv=None):
                      help='Floor on the ratio-derived negative count, per '
                           'million patches in the working AOI, so a small '
                           'point set still gets a background sample '
-                          'proportionate to the area searched. Ignored when '
+                          'proportionate to the patches actually searched -- '
+                          'partial embedding coverage scales it down to match. '
+                          'Ignored when '
                           '--n-negatives is given.')
     lab.add_argument('--neg-min-dist-m', type=float, default=3000.0,
                      help='Minimum distance from a negative to any known '
