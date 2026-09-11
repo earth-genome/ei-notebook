@@ -52,6 +52,22 @@ The model is then built from the trusted points alone and the rest are admitted
 only if it scores them well. This is much the strongest way to handle a mixed
 register — see *Cleaning a mixed-provenance point set*.
 
+Every run also writes `_footprints_split.geojson`: one polygon per facility,
+dividing any footprint that covers several between them, which is what
+downstream work needs to allocate ponds. Nothing is discarded by default. To
+disown ground too far from any facility to be part of it:
+
+```bash
+    --split-max-dist-m 790
+```
+
+Choose that number by looking. Each run prints how far its own single-facility
+footprints reach — `p50 255 m, p90 790 m, p98 1,776 m` — and anything beyond the
+cap becomes a *detected, not attributable to a listed facility* row rather than
+being given to the nearest one. The right value differs sharply by AOI: Türkiye
+wanted p90 and Kansas no cap at all, on near-identical distributions. See
+*Outputs*.
+
 Add `--reference-polygons REF.geojson` if you happen to have existing polygons to
 compare against. You usually won't; everything important works without them.
 
@@ -163,6 +179,7 @@ Each run writes into its own `<outdir>/run_<tag>_<timestamp>/` folder, so
 |---|---|
 | `_footprints.geojson` | the deliverable — one row per footprint, with `area_ha`, `n_positives` and `positive_ids` |
 | `_positives_uncovered.geojson` | input facilities that got **no** footprint, with `excluded_from_training`, `excluded_by`, `oof_probability` and `dist_to_footprint_m` |
+| `_footprints_split.geojson` | one row per facility, `split_id` = `<poly_id>-<NN>`, plus `-00` rows for ground no facility could claim. `--no-split-footprints` to skip |
 | `_positive_to_footprint.csv` | the facility↔footprint relation, readable in either direction |
 | `_positives_excluded.geojson` | positives dropped from *training*, with `oof_probability` and `redetected_anyway` |
 | `_stats.txt`, `_config.txt` | the summary and the full parameter/provenance record |
@@ -322,6 +339,49 @@ Without a provenance field, the fallback runs automatically: positives the model
 scores near zero when held out are excluded and it refits. That catches isolated
 errors well and batches of similar errors poorly, which is exactly why the
 provenance route is preferable when it is available.
+
+### A trusted subset can be small and still worth using
+
+Eastern Australia's register is 1,230 points: 1,095 from permit records and only
+**135 from prior remote-sensed detections** (`tdx`). Seeding on that ninth of the
+data still produced better footprints than training on everything — 122 trusted
+points survived snapping, and the sharpened seed admitted 279 of the rest.
+
+Training on all 1,230 instead made the model fire across open country. The reason
+is visible in the imagery: many permitted sites are so small that they read as
+ordinary rural scene to a human eye, and evidently to the model as well. Include
+them as positives and "rural" becomes part of what the model has learned a
+facility to be, so it predicts rural everywhere. That is the same failure as New
+Mexico's compliance addresses, arriving by a different route — there the points
+were in the wrong place, here they are in the right place but below what the
+embeddings can distinguish.
+
+Headline recall on that run was 51.6%, which is the honest figure for a register
+where about half the entries are not reconstructible at this resolution. Do not
+chase it by relaxing the trusted set.
+
+### What to do with the facilities that get no footprint
+
+Whether `positives_uncovered.geojson` is worth shipping alongside the footprints
+depends on **why** the points are uncovered, and that differs by register:
+
+- **Türkiye and eastern Australia: ship it.** Visual inspection shows the large
+  majority of input locations are genuinely good. Where no footprint comes back,
+  it is because the facility is very small or morphologically atypical — not
+  because the point is wrong. Those locations are real and worth passing on, with
+  the caveat that a footprint could not be constructed for them. For the Australian
+  permit sites in particular, footprints are probably not reconstructible in this
+  paradigm at all, and delivering the locations is the right answer rather than a
+  consolation prize.
+- **The US state registers: do not ship it.** There the uncovered points were
+  typically *not* well situated over any facility, so the layer is mostly bad
+  locations rather than hard ones. Turkiye's 58 uncovered points sat a median of
+  4.6 km from the nearest detection, which is what that looks like in numbers.
+
+The distinction is worth making explicitly because the layer is identical in both
+cases. What differs is whether "no footprint" means "we could not draw this one"
+or "this point was never a facility", and only review against imagery tells you
+which register you have.
 
 ## The two numbers that matter
 

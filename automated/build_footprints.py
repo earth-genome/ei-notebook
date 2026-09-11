@@ -71,6 +71,8 @@ from footprints.pipeline import (detect_and_filter, label_metrics,  # noqa: E402
                                  mine_hard_negatives, seeded_admission,
                                  select_best_round, train_model)
 from footprints.reporting import write_config, write_stats  # noqa: E402
+from footprints.split import (single_facility_reach,  # noqa: E402
+                              split_footprints)
 from footprints.util import log, warn  # noqa: E402
 
 try:
@@ -694,6 +696,52 @@ def main(args):
     crosswalk.to_csv(crosswalk_path, index=False)
     written.append(crosswalk_path)
 
+    if args.split_footprints:
+        log('Dividing footprints between the facilities they cover...')
+        patch_xy = det_xy[keep_patch]
+        # Patch -> index into the retained arrays, which is what split works in.
+        poly_of_kept = np.full(len(polys), -1, dtype='i8')
+        poly_of_kept[kept_idx] = np.arange(len(kept_idx))
+        patch_poly = poly_of_kept[owner[keep_patch]]
+        reach = single_facility_reach(patch_xy, patch_poly, pos_xy, pp, qq)
+        if len(reach):
+            # Always reported, because choosing a cap needs these numbers and
+            # the choice cannot be made from the geometry: Turkiye and Kansas
+            # have near-identical reach distributions but opposite right
+            # answers, the difference being how much each run over-detects.
+            pct = {q: float(np.percentile(reach, q))
+                   for q in (50, 75, 90, 95, 98)}
+            log(f'  reach of {len(reach):,} single-facility footprints: '
+                + ', '.join(f'p{q} {v:,.0f} m' for q, v in pct.items()))
+            ctx['reach_percentiles'] = pct
+        cap = args.split_max_dist_m
+        if cap is None and args.split_reach_percentile is not None and len(reach):
+            cap = float(np.percentile(reach, args.split_reach_percentile))
+            log(f'  --split-reach-percentile '
+                f'{args.split_reach_percentile:g} -> cap {cap:,.0f} m')
+        if cap is None:
+            log('  no distance cap; every patch is attributed to a facility '
+                '(--split-max-dist-m to disown distant ground)')
+        ctx['split_max_dist_m'] = cap
+        rows = split_footprints(
+            kept_idx, patch_xy, patch_poly, pos_xy,
+            pos['positive_id'].to_numpy(), pp, qq, cell_size_m,
+            args.merge_buffer_m + args.gap_close_m, max_dist=cap)
+        if rows:
+            split = gpd.GeoDataFrame(rows, geometry='geometry', crs=metric_crs)
+            # The cap goes in the filename when one is set: choosing it means
+            # comparing two or three runs, and these files get copied out of
+            # their run folders where the name is all that identifies them.
+            suffix = ('footprints_split' if cap is None
+                      else f'footprints_split_d{cap:.0f}m')
+            to_file(split, suffix)
+            key = {(r['poly_id'], r['positive_id']): r['split_id']
+                   for r in rows if r['attributed']}
+            crosswalk['split_id'] = [
+                key.get((p, str(i)), '') for p, i in
+                zip(crosswalk.poly_id, crosswalk.positive_id)]
+            crosswalk.to_csv(crosswalk_path, index=False)
+
     labels = gpd.GeoDataFrame(
         {'int_class': y,
          'source': label_source,
@@ -937,6 +985,27 @@ def parse_args(argv=None):
                           'positives. Exclusions do not converge on their own, '
                           'so this stops the gate eating the positive class; '
                           'hitting it is itself flagged.')
+    adv.add_argument('--split-footprints',
+                     action=argparse.BooleanOptionalAction, default=True,
+                     help='Write one footprint per facility alongside the '
+                          'footprints file, dividing any polygon covering '
+                          'several between them by growth through the detected '
+                          'patches. On by default: the geometry is already '
+                          'computed and the extra file is small, and either can '
+                          'be delivered. --no-split-footprints to skip it.')
+    adv.add_argument('--split-max-dist-m', type=float, default=None,
+                     metavar='M',
+                     help='With --split-footprints, ground further than this '
+                          'from any facility becomes an unattributed row rather '
+                          'than going to the nearest one. Off by default: how '
+                          'much distant ground is real facility differs by AOI '
+                          'and only imagery settles it. Every run prints the '
+                          'reach of its own single-facility footprints, so run '
+                          'once, look, then set a value and re-run.')
+    adv.add_argument('--split-reach-percentile', type=float, default=None,
+                     metavar='P',
+                     help='Instead of a metre value, take the cap at this '
+                          'percentile of this run\'s single-facility reach.')
     adv.add_argument('--save-unfiltered-polygons', action='store_true',
                      help='Also write every merged polygon, including those no '
                           'known positive lands on, with a "retained" column. '
