@@ -233,16 +233,21 @@ def filter_to_positives(items, positives_path, buffer_km):
 
 def _fetch_one(url, path):
     """Download one asset to path, via a .part file. Returns bytes written."""
+    import shutil
+
     import requests
     tmp = path.with_suffix(path.suffix + '.part')
-    n = 0
     with requests.get(url, stream=True, timeout=(30, 300)) as r:
         if r.status_code >= 300:
             raise RuntimeError(f'{url} returned HTTP {r.status_code}')
+        # copyfileobj over the raw stream rather than iter_content: the latter
+        # hands every chunk through Python and measured about a third slower
+        # than curl on the same file. decode_content keeps any transfer
+        # encoding handled, which reading r.raw directly would skip.
+        r.raw.decode_content = True
         with open(tmp, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-                n += len(chunk)
+            shutil.copyfileobj(r.raw, f, length=4 << 20)
+    n = tmp.stat().st_size
     # Renamed only once complete, so an interrupted run resumes cleanly instead
     # of leaving a truncated file that looks downloaded.
     tmp.rename(path)
