@@ -869,10 +869,13 @@ def parse_args(argv=None):
                          'recall), "last", or a round number. Every round is '
                          'trained and tabulated regardless; add '
                          '--save-round-outputs to write them all.')
-    io.add_argument('--save-round-outputs', action='store_true',
-                    help='Also write each round\'s footprints as '
+    io.add_argument('--save-round-outputs',
+                    action=argparse.BooleanOptionalAction, default=True,
+                    help='Write each round\'s footprints as '
                          '*_round<N>_footprints.geojson, for comparing rounds '
-                         'in GIS.')
+                         'in GIS. On by default: the geometry is already '
+                         'computed, the files are under a megabyte, and not '
+                         'having them has meant re-running whole jobs.')
     io.add_argument('--seed', type=int, default=42)
 
     lab = parser.add_argument_group('standard options: labeled set')

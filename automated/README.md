@@ -358,9 +358,10 @@ entire gain. That is the case the automatic rule exists for.
 
 To override: `--select-round last`, or `--select-round <N>` for a specific one.
 **Neither avoids the work** — every round is trained and inferred regardless, and
-the setting only decides which round's outputs get written. To inspect several
-rounds from a single run, use `--save-round-outputs`, which writes every round's
-polygons for comparison in GIS.
+the setting only decides which round's outputs get *selected*. Every round's
+polygons are written anyway, as `*_round<N>_footprints.geojson`, so you can
+compare rounds in GIS or score them with `evaluate_footprints.py` without
+re-running. Pass `--no-save-round-outputs` to suppress them.
 
 The default is 4 mining rounds (five passes), which gives the selector enough
 range to find a turning point. Extra rounds cost one inference pass each and are
