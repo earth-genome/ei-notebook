@@ -30,9 +30,6 @@ never holds the feature matrix in memory:
     --centroids CENTROIDS.parquet --duckdb EMBEDDINGS.db
 ```
 
-Build those two assets from embedding parquets with the repo's
-`scripts/build_duck_assets.py`, shared with the interactive workflow.
-
 Name the column holding your facility identifier, so every footprint can be
 attributed back to the facility it belongs to. You almost always want this:
 
@@ -57,6 +54,42 @@ register — see *Cleaning a mixed-provenance point set*.
 
 Add `--reference-polygons REF.geojson` if you happen to have existing polygons to
 compare against. You usually won't; everything important works without them.
+
+### Getting the embeddings
+
+If you don't already have an embeddings parquet for your area, `fetch_embeddings.py`
+builds one from the STAC catalogue — searching, downloading, quantizing,
+deduplicating where MGRS tiles overlap, and assigning the `tile_id` the pipeline
+keys on:
+
+```bash
+python3 automated/fetch_embeddings.py \
+    --region AOI.geojson \
+    --start 2025-01-01 --end 2025-12-31 \
+    --name myaoi --outdir . --build-duckdb
+```
+
+Ask for the calendar year you want. Yearly embeddings run 1 January to 1 January,
+so that window also touches the previous vintage and the catalogue returns both;
+the one your window genuinely overlaps is kept, and the period the catalogue
+reports is what lands in the filename.
+
+Two options matter for large areas:
+
+- `--positives POINTS.geojson` fetches only tiles a known facility lands on. For
+  eastern Australia that is 154 tiles instead of 286, because most of the region
+  has no cattle in it. Use it where targets are clustered; skip it where they're
+  spread out, as in Kansas or Türkiye.
+- `--clip AOI.geojson` drops patches outside the boundary during assembly, rather
+  than re-clipping on every run. Give it a real AOI boundary, **not** a tight
+  buffer around the positives: negative sampling holds 3 km off every positive
+  and hard-negative mining works by finding look-alikes away from facilities, so
+  clipping to the points themselves starves both.
+
+`--dry-run` lists the tiles it would fetch, which is worth doing before
+committing to a continent's worth of download. `--build-duckdb` runs the repo's
+`scripts/build_duck_assets.py` for you; you can also run that directly on
+embedding parquets you already have.
 
 `python3 tests/test_footprints_smoke.py` runs the whole pipeline on a synthetic
 area in about a minute and checks 28 invariants. Run it after changing anything.
@@ -411,6 +444,7 @@ result.
 
 | | |
 |---|---|
+| `fetch_embeddings.py` | Build an embeddings parquet from the STAC catalogue: search, download, quantize, dedupe at MGRS overlaps, assign `tile_id`, optionally build the DuckDB pair. See *Getting the embeddings*. |
 | `evaluate_footprints.py` | Compare footprints against reference polygons. Runs standalone, so it also scores per-round outputs. |
 | `--save-unfiltered-polygons` | Not a tool but worth knowing: writes every merged polygon with a `retained` flag, the only route to unlisted facilities. See the ratio guidance under *Assumptions and limitations*. |
 | `review_rejected_positives.py` | Triage a point set against a trained model: which points are mislocated, and by how far, versus which have no signal at all. |
