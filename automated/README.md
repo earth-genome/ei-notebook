@@ -88,8 +88,38 @@ notebook workflow share the repo and the asset builder, not code.
 7. **Run inference** across every patch in the AOI.
 8. **Merge and filter.** Detected patches become polygons; a polygon is kept if
    it contains, or nearly contains, one of your known points.
-9. **Report.** Statistics, a self-assessment, and GeoJSON for the raw detections,
-   the filtered patches and the final footprints.
+9. **Attribute and report.** Statistics, a self-assessment, and the output
+   layers below.
+
+## Outputs
+
+Each run writes into its own `<outdir>/run_<tag>_<timestamp>/` folder, so
+`--outdir` is a parent directory holding many runs rather than a pile of files.
+
+| file | what it is |
+|---|---|
+| `_footprints.geojson` | the deliverable — one row per footprint, with `area_ha`, `n_positives` and `positive_ids` |
+| `_positives_uncovered.geojson` | input facilities that got **no** footprint, with `excluded_from_training`, `excluded_by`, `oof_probability` and `dist_to_footprint_m` |
+| `_positive_to_footprint.csv` | the facility↔footprint relation, readable in either direction |
+| `_positives_excluded.geojson` | positives dropped from *training*, with `oof_probability` and `redetected_anyway` |
+| `_stats.txt`, `_config.txt` | the summary and the full parameter/provenance record |
+| `_detections_raw`, `_patches_filtered` | patch-level layers, joinable to footprints on `poly_id` |
+| `_model.joblib`, `_fbeta_*.png`, `_pr.png` | the fitted probe and its curves |
+
+**Attributing footprints to facilities.** The relation is many-to-many: one
+polygon can cover several neighbouring facilities, and one facility can be
+bracketed by disjoint polygons. Where a facility's pieces belong to it alone
+they are reassembled into a single MultiPolygon row; pieces shared with a
+neighbour are left separate, because absorbing them would attribute that
+neighbour's ground to the wrong facility. What remains is recorded explicitly:
+`positive_ids` on each footprint, and `_positive_to_footprint.csv` for the
+reverse direction. On a Kansas run, about 89% of pairs are a clean one-to-one
+and the table only matters for the rest.
+
+Facility identifiers come from `--positive-id-field` (e.g. `asset_identifier`),
+defaulting to the row number in the positives file. The footprints and the
+uncovered layer partition your register exactly: every input facility appears
+in one or the other, so nothing falls silently between them.
 
 ## Assumptions and limitations
 

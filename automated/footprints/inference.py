@@ -71,6 +71,20 @@ def assign_patches(polys, points):
     return owner
 
 
+def positive_polygon_pairs(polys, pos_points, tol_m):
+    """Every (positive index, polygon index) pair under the matching criterion.
+
+    The relation is many-to-many: one polygon can cover several facilities, and
+    one facility can be bracketed by disjoint polygons. match_positives()
+    collapses this to per-polygon counts and a first-match; callers that need
+    the full relation -- the facility crosswalk -- use this directly.
+    """
+    if len(polys) == 0 or len(pos_points) == 0:
+        return np.zeros(0, dtype='i8'), np.zeros(0, dtype='i8')
+    probe = (shapely.buffer(pos_points, tol_m) if tol_m > 0 else pos_points)
+    return shapely.STRtree(polys).query(probe, predicate='intersects')
+
+
 def match_positives(polys, pos_points, tol_m):
     """Count known positives matched to each polygon.
 
@@ -86,9 +100,7 @@ def match_positives(polys, pos_points, tol_m):
     if len(polys) == 0 or len(pos_points) == 0:
         return counts, matched_pos, poly_of_pos
 
-    probe = (shapely.buffer(pos_points, tol_m) if tol_m > 0 else pos_points)
-    tree = shapely.STRtree(polys)
-    pos_i, poly_i = tree.query(probe, predicate='intersects')
+    pos_i, poly_i = positive_polygon_pairs(polys, pos_points, tol_m)
     for p, q in zip(pos_i, poly_i):
         counts[q] += 1
         matched_pos[p] = True

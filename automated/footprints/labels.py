@@ -13,18 +13,37 @@ from scipy.spatial import cKDTree
 from .util import warn
 
 
-def load_points(path, metric_crs, keep_field=None):
+def load_points(path, metric_crs, keep_field=None, id_field=None):
     """Read a vector file and return centroid geometry in the metric CRS.
 
     keep_field, when given, is carried through as a column (used for the
     provenance field that drives seeded admission).
+
+    Every row also gets a positive_id, used to attribute footprints back to
+    facilities. It comes from id_field when given, otherwise from the row's
+    position in the input file. Either way it is taken before any row is
+    dropped, so an id always points at the same row of the file the caller
+    passed in -- positives are later discarded for falling outside the boundary
+    or landing too far from a patch, and ids assigned after that would silently
+    shift.
     """
     gdf = gpd.read_file(path)
     if gdf.crs is None:
         raise SystemExit(f'{path} has no CRS.')
-    gdf = gdf[~gdf.geometry.isna() & ~gdf.geometry.is_empty]
+    if id_field and id_field not in gdf.columns:
+        raise SystemExit(
+            f'--positive-id-field "{id_field}" not present in {path}. '
+            f'Columns are: {[c for c in gdf.columns if c != "geometry"]}')
+    ids = (gdf[id_field].astype(str).to_numpy() if id_field
+           else np.arange(len(gdf)).astype(str))
+    if len(np.unique(ids)) < len(ids):
+        warn(f'positive ids are not unique in {path}; footprint attribution '
+             'will be ambiguous for the repeated ones.')
+
+    alive = (~gdf.geometry.isna() & ~gdf.geometry.is_empty).to_numpy()
+    gdf, ids = gdf[alive], ids[alive]
     gdf = gdf.to_crs(metric_crs)
-    cols = {'geometry': gdf.geometry.centroid}
+    cols = {'geometry': gdf.geometry.centroid, 'positive_id': ids}
     if keep_field:
         if keep_field not in gdf.columns:
             raise SystemExit(

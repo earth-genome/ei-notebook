@@ -62,6 +62,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from footprints.backends import make_backend  # noqa: E402
 from footprints.geometry import (boundary_mask, build_squares,  # noqa: E402
                                 choose_metric_crs, detect_stride, project)
+from footprints.inference import positive_polygon_pairs  # noqa: E402
 from footprints.labels import (load_points, sample_negatives,  # noqa: E402
                                snap_positives)
 from footprints.modeling import (convergence_summary,  # noqa: E402
@@ -138,7 +139,8 @@ def main(args):
     # --- Step 1: positives --------------------------------------------------
     pos = load_points(args.positives, metric_crs,
                       keep_field=args.source_field if args.trusted_source
-                      else None)
+                      else None,
+                      id_field=args.positive_id_field)
     ctx['n_pos_read'] = int(len(pos))
     log(f'Positives: {ctx["n_pos_read"]:,} points read')
     pos_xy = np.column_stack([pos.geometry.x, pos.geometry.y])
@@ -571,6 +573,64 @@ def main(args):
                           predicate='intersects')
         ctx['n_fragment_neighbours'] = int(len(np.unique(hits[0])))
 
+    # --- Facility attribution ------------------------------------------------
+    # The positive-to-polygon relation is many-to-many, so no single id column
+    # on the footprints can carry it. Reassemble the pieces that belong to one
+    # facility, then record the rest of the relation explicitly.
+    pos_points_all = shapely.points(pos_xy)
+    pp, qq = positive_polygon_pairs(kept_polys, pos_points_all, match_tol)
+    n_poly_for_pos = np.bincount(pp, minlength=len(pos_xy))
+    n_pos_in_poly = np.bincount(qq, minlength=len(kept_polys))
+
+    # A facility bracketed by disjoint polygons is one footprint in pieces,
+    # usually split by a patch that did not fire. Merge the pieces -- but only
+    # where every piece belongs to that facility alone. Absorbing a polygon that
+    # also covers a neighbour would attribute that neighbour's ground to this
+    # facility, which is worse than leaving the pieces separate.
+    groups = []
+    for p in np.flatnonzero(n_poly_for_pos > 1):
+        qs = np.unique(qq[pp == p])
+        if (n_pos_in_poly[qs] == 1).all():
+            groups.append(qs)
+    ctx['n_merged_fragments'] = sum(len(g) - 1 for g in groups)
+    if groups:
+        log(f'Reassembling {len(groups)} fragmented footprint(s) from '
+            f'{sum(len(g) for g in groups)} polygons...')
+        drop, remap = set(), {}
+        for qs in groups:
+            head, rest = int(qs[0]), qs[1:]
+            merged = shapely.union_all(kept_polys[qs])
+            weights = np.maximum(cells[qs], 1)
+            confidence[head] = float(np.average(confidence[qs], weights=weights))
+            cells[head] = int(cells[qs].sum())
+            areas_ha[head] = float(shapely.area(merged) / 1e4)
+            kept_polys[head] = merged
+            for q in rest:
+                drop.add(int(q))
+                remap[int(kept_idx[q])] = int(kept_idx[head])
+        # Patch-level layers carry poly_id too; repoint them at the survivor so
+        # every layer keeps the same id space.
+        lut = np.arange(len(polys))
+        for old, new in remap.items():
+            lut[old] = new
+        assigned_mask = owner >= 0
+        owner[assigned_mask] = lut[owner[assigned_mask]]
+
+        survives = ~np.isin(np.arange(len(kept_polys)), list(drop))
+        kept_idx, kept_polys = kept_idx[survives], kept_polys[survives]
+        areas_ha, cells = areas_ha[survives], cells[survives]
+        confidence = confidence[survives]
+        ctx['areas_ha'], ctx['cells_per_poly'] = areas_ha, cells
+        pp, qq = positive_polygon_pairs(kept_polys, pos_points_all, match_tol)
+        n_poly_for_pos = np.bincount(pp, minlength=len(pos_xy))
+        n_pos_in_poly = np.bincount(qq, minlength=len(kept_polys))
+
+    pos_ids = pos['positive_id'].to_numpy()
+    ids_per_poly = [[] for _ in range(len(kept_polys))]
+    for p, q in zip(pp, qq):
+        ids_per_poly[q].append(pos_ids[p])
+    positive_ids = [','.join(v) for v in ids_per_poly]
+
     # --- Step 8: outputs ----------------------------------------------------
     log('Writing outputs...')
     written = []
@@ -605,9 +665,27 @@ def main(args):
          'confidence': confidence,
          'n_patches': cells,
          'area_ha': areas_ha,
-         'n_positives': counts[kept_idx]},
+         'n_positives': n_pos_in_poly,
+         'positive_ids': positive_ids},
         geometry=list(kept_polys), crs=metric_crs)
     to_file(footprints, 'footprints')
+
+    # The full facility relation, readable in either direction. A polygon can
+    # cover several facilities and a facility can still span several polygons
+    # (where a shared piece blocked the merge above), so neither layer's columns
+    # can express it alone.
+    crosswalk = pd.DataFrame({
+        'positive_id': pos_ids[pp],
+        'poly_id': kept_idx[qq],
+        'n_polys_for_positive': n_poly_for_pos[pp],
+        'n_positives_in_poly': n_pos_in_poly[qq],
+        'distance_m': np.round(
+            shapely.distance(pos_points_all[pp], kept_polys[qq]), 1),
+    }).sort_values(['positive_id', 'poly_id'])
+    crosswalk_path = os.path.join(
+        run_dir, f'{basename}_positive_to_footprint.csv')
+    crosswalk.to_csv(crosswalk_path, index=False)
+    written.append(crosswalk_path)
 
     labels = gpd.GeoDataFrame(
         {'int_class': y,
@@ -632,9 +710,15 @@ def main(args):
 
     # Positives with no footprint under the emitted solution -- the
     # client-facing "which of my facilities did not get one".
-    if (~matched_pos).any():
-        uncovered = pos[~matched_pos].copy()
-        missed_positions = pos_positions[~matched_pos]
+    # Recomputed against the emitted footprints rather than reusing the
+    # pre-merge matched_pos, so this layer and the crosswalk partition the
+    # register exactly: every input facility is in one or the other.
+    covered = np.zeros(len(pos_xy), dtype=bool)
+    covered[pp] = True
+    ctx['n_uncovered'] = int((~covered).sum())
+    if (~covered).any():
+        uncovered = pos[~covered].copy()
+        missed_positions = pos_positions[~covered]
         # Membership is derived from the final labelled set, not by subtracting
         # any one mechanism's exclusions -- the gate and seeded admission both
         # remove positives, and a future third would be missed. Same reasoning
@@ -664,7 +748,6 @@ def main(args):
             uncovered['dist_to_footprint_m'] = np.round(
                 shapely.distance(geom, kept_polys[nearest]), 1)
         to_file(uncovered, 'positives_uncovered')
-    ctx['n_uncovered'] = int((~matched_pos).sum())
 
     if args.save_unfiltered_polygons:
         # Every merged polygon, including those no known positive lands on.
@@ -814,6 +897,10 @@ def parse_args(argv=None):
     adv.add_argument('--source-field', default='source',
                      help='Attribute in the positives file holding provenance, '
                           'used with --trusted-source.')
+    adv.add_argument('--positive-id-field', default=None, metavar='FIELD',
+                     help='Attribute holding a facility identifier, carried '
+                          'into the footprint attribution outputs. Defaults to '
+                          'the row number in the positives file.')
     adv.add_argument('--seed-rounds', type=int, default=2,
                      help='Hard-negative rounds used to sharpen the trusted-only '
                           'seed before it judges candidates. A round-0 seed is '

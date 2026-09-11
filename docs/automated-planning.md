@@ -334,13 +334,19 @@ grid, so high agreement demonstrates reproduction of the prior workflow, not
 independent accuracy.
 
 ### Step 8 — outputs
-Into `--outdir` (default `./runs`), basenamed `{--tag}_{ISO timestamp}`:
+Into `<--outdir>/run_{--tag}_{ISO timestamp}/` (outdir defaults to `./runs`),
+with each file basenamed `{--tag}_{ISO timestamp}`. One folder per run: the
+prefix is kept inside it so a file copied out on its own still says which run
+it came from.
 
 | File | Contents |
 |---|---|
 | `*_detections_raw.geojson` | all detected patches, **as centroid points** + `probability` (can be 10^5-10^6 features; points keep the file small, as the notebook comment notes). `--raw-as-polygons` to write squares instead |
 | `*_patches_filtered.geojson` | patches belonging to *retained* polygons, as squares + `probability`, `poly_id` |
-| `*_footprints.geojson` | final merged polygons + `confidence`, `n_patches`, `area_ha`, `n_positives` |
+| `*_footprints.geojson` | final merged polygons + `confidence`, `n_patches`, `area_ha`, `n_positives`, `positive_ids` |
+| `*_positives_uncovered.geojson` | input facilities with no footprint + `excluded_from_training`, `excluded_by`, `oof_probability`, `dist_to_footprint_m`. With the crosswalk this partitions the register: every input facility is in one or the other |
+| `*_positive_to_footprint.csv` | the facility-footprint relation, both directions: `positive_id`, `poly_id`, `n_polys_for_positive`, `n_positives_in_poly`, `distance_m` |
+| `*_positives_excluded.geojson` | positives dropped from *training* + `oof_probability`, `redetected_anyway` |
 | `*_config.txt` | every CLI parameter, input paths with sizes and short hashes, backend used, detected stride/patch size, metric CRS, selected threshold (+ margin), **OOF confusion matrix**, CV metrics, library versions, and any warnings |
 | `*_stats.txt` | step 7 |
 | `*_eval.txt` + `*_eval_{missed_refs,novel_polys,matched}.geojson` | step 7b, when `--reference-polygons` is given |
