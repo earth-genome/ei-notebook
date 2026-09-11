@@ -44,11 +44,22 @@ Without it, facilities are identified by their row number in the positives file,
 which works but breaks the moment that file is re-sorted. See *Outputs* for how
 the attribution is written.
 
+If your points come from several sources of differing quality, and one of them
+is trustworthy, name it:
+
+```bash
+    --source-field source --trusted-source ei
+```
+
+The model is then built from the trusted points alone and the rest are admitted
+only if it scores them well. This is much the strongest way to handle a mixed
+register — see *Cleaning a mixed-provenance point set*.
+
 Add `--reference-polygons REF.geojson` if you happen to have existing polygons to
 compare against. You usually won't; everything important works without them.
 
-`python3 tests/test_footprints_smoke.py` runs the whole pipeline on a synthetic area in
-about a minute and checks 23 invariants. Run it after changing anything.
+`python3 tests/test_footprints_smoke.py` runs the whole pipeline on a synthetic
+area in about a minute and checks 28 invariants. Run it after changing anything.
 
 ## Layout
 
