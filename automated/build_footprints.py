@@ -596,6 +596,11 @@ def main(args):
     if groups:
         log(f'Reassembling {len(groups)} fragmented footprint(s) from '
             f'{sum(len(g) for g in groups)} polygons...')
+        # cells and confidence come from pandas .to_numpy(), which can hand back
+        # a read-only view; everything below is mutated in place.
+        cells, confidence = cells.copy(), confidence.copy()
+        areas_ha, kept_polys = areas_ha.copy(), kept_polys.copy()
+        owner = owner.copy()
         drop, remap = set(), {}
         for qs in groups:
             head, rest = int(qs[0]), qs[1:]

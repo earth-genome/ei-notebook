@@ -56,6 +56,16 @@ extents = rng.integers(0, 3, n_fac)
 pos_mask = np.zeros((nx, ny), bool)
 for a, b, e in zip(fac_i, fac_j, extents):
     pos_mask[a - e:a + e + 1, b - e:b + e + 1] = True
+
+# One more facility, deliberately fragmented: two firing patches three strides
+# apart with background between them. Their cells are two strides wide, so they
+# fall a stride short of touching and arrive as two disjoint polygons for a
+# single facility -- the case the reassembly path exists for. Placed in the
+# first window clear of the other facilities so the split is unambiguous.
+frag = next((a, b) for a in range(3, nx - 6) for b in range(3, ny - 3)
+            if not pos_mask[a - 1:a + 5, b - 1:b + 2].any())
+pos_mask[frag[0], frag[1]] = True
+pos_mask[frag[0] + 3, frag[1]] = True
 pos_mask = pos_mask.ravel()
 
 X = rng.integers(60, 90, size=(n, 384)).astype(np.uint8)
@@ -67,6 +77,15 @@ X[pos_mask, :8] = rng.integers(200, 255, size=(pos_mask.sum(), 8))
 decoy = rng.choice(np.flatnonzero(~pos_mask), 250, replace=False)
 X[np.ix_(decoy, np.arange(8))] = rng.integers(195, 250, size=(len(decoy), 8))
 
+# Hold the corridor between the fragment's two halves firmly background. The
+# halves sit three strides apart, which is as far as they can be while their
+# shared facility point stays within match tolerance of both -- so a single
+# spurious detection in between bridges the cells and the facility arrives whole
+# instead of fragmented. Applied after the decoys so nothing overwrites it.
+bridge = [(frag[0] + di) * ny + (frag[1] + dj)
+          for di in (1, 2) for dj in (-1, 0, 1)]
+X[np.ix_(bridge, np.arange(8))] = rng.integers(0, 30, size=(len(bridge), 8))
+
 geom = shapely.box(lon - dlon, lat - dlat, lon + dlon, lat + dlat)
 tile_id = np.array([f'14SXX_{i}_{j}' for i, j in zip(ix.ravel(), iy.ravel())],
                    dtype=object)
@@ -74,8 +93,13 @@ tbl = pa.table({**{f'vit-dino-patch16_{k}': X[:, k] for k in range(384)},
                 'tile_id': pa.array(tile_id)})
 gpd.GeoDataFrame(tbl.to_pandas(), geometry=list(geom), crs='EPSG:4326'
                  ).to_parquet('synth_embeddings.parquet', index=False)
-gpd.GeoDataFrame(geometry=[shapely.Point(lon0 + a * dlon, lat0 + b * dlat)
-                           for a, b in zip(fac_i, fac_j)], crs='EPSG:4326'
+pts = [shapely.Point(lon0 + a * dlon, lat0 + b * dlat)
+       for a, b in zip(fac_i, fac_j)]
+# The fragmented facility's point sits midway between its two halves, on the
+# background patch, within match tolerance of both polygons and inside neither.
+pts.append(shapely.Point(lon0 + (frag[0] + 1.5) * dlon, lat0 + frag[1] * dlat))
+gpd.GeoDataFrame({'asset_id': [f'FAC_{k}' for k in range(len(pts))]},
+                 geometry=pts, crs='EPSG:4326'
                  ).to_file('synth_positives.geojson', driver='GeoJSON')
 polys = []
 for a, b, e in zip(fac_i, fac_j, extents):
@@ -91,7 +115,8 @@ gpd.GeoDataFrame(geometry=[shapely.box(lon.min() - dlon, lat.min() - dlat,
                                        lon.max() + dlon, lat.max() + dlat)],
                  crs='EPSG:4326').to_file('synth_boundary.geojson',
                                           driver='GeoJSON')
-print(f'fixture: {n} patches, {n_fac} facilities, {len(decoy)} decoys')
+print(f'fixture: {n} patches, {n_fac + 1} facilities '
+      f'(1 fragmented), {len(decoy)} decoys')
 '''
 
 PASS, FAIL = [], []
@@ -136,7 +161,8 @@ def main(keep=False):
         common = ['--positives', 'synth_positives.geojson',
                   '--reference-polygons', 'synth_reference.geojson',
                   '--boundary', 'synth_boundary.geojson',
-                  '--outdir', 'out', '--batch-size', '5000']
+                  '--outdir', 'out', '--batch-size', '5000',
+                  '--positive-id-field', 'asset_id']
 
         # --- parquet backend, default settings --------------------------------
         rc, out = run([sys.executable, BUILD, *common,
@@ -171,11 +197,14 @@ def main(keep=False):
               bad[0].strip() if bad else '')
 
         rec = field(stats, 'matched by a retained polygon:')
-        check('all positives recovered', rec == '25', f'{rec}/25')
+        check('all positives recovered', rec == '26', f'{rec}/26')
 
+        # The fragmented facility's point sits on background between its two
+        # halves, so the gate is right to flag it; anything beyond that one is
+        # the gate firing spuriously on clean data.
         gate = field(cfg, 'Positives excluded and refitted:')
-        check('label gate excludes nothing in clean data', gate == '0',
-              f'{gate} excluded')
+        check('label gate excludes at most the fragment centroid',
+              gate is not None and int(gate) <= 1, f'{gate} excluded')
 
         n_rounds = len(glob.glob(os.path.join(
             work, 'out', 'run_pq_*', 'pq_*_round*_footprints.geojson')))
@@ -188,6 +217,31 @@ def main(keep=False):
               f'{len(fp)} polygons')
         check('no absurd merged polygon', fp.area_ha.max() < 500,
               f'max {fp.area_ha.max():.0f} ha')
+
+        # --- facility attribution ---------------------------------------------
+        # The fragmented facility must come back as one MultiPolygon row, not
+        # two, and the patch-level layers must follow the surviving poly_id.
+        multi = (fp.geom_type == 'MultiPolygon').sum()
+        check('fragmented facility reassembled', multi == 1,
+              f'{multi} multipolygon(s)')
+
+        import pandas as pd
+        xw = pd.read_csv(cfg.replace('_config.txt',
+                                     '_positive_to_footprint.csv'))
+        per_pos = xw.groupby('positive_id').size()
+        check('no facility left split across polygons', (per_pos == 1).all(),
+              f'{int((per_pos > 1).sum())} still split')
+        check('crosswalk carries the id field', 'FAC_' in str(xw.positive_id[0]),
+              str(xw.positive_id[0]))
+        check('crosswalk agrees with footprint counts',
+              len(xw) == int(fp.n_positives.sum()),
+              f'{len(xw)} rows vs {int(fp.n_positives.sum())} matches')
+
+        pat = gpd.read_file(cfg.replace('_config.txt',
+                                        '_patches_filtered.geojson'))
+        check('patch poly_ids all exist in footprints',
+              set(pat.poly_id) <= set(fp.poly_id),
+              f'{len(set(pat.poly_id) - set(fp.poly_id))} dangling')
 
         # --- --select-round ---------------------------------------------------
         rc, out = run([sys.executable, BUILD, *common,

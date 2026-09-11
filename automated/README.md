@@ -33,6 +33,17 @@ never holds the feature matrix in memory:
 Build those two assets from embedding parquets with the repo's
 `scripts/build_duck_assets.py`, shared with the interactive workflow.
 
+Name the column holding your facility identifier, so every footprint can be
+attributed back to the facility it belongs to. You almost always want this:
+
+```bash
+    --positive-id-field asset_identifier
+```
+
+Without it, facilities are identified by their row number in the positives file,
+which works but breaks the moment that file is re-sorted. See *Outputs* for how
+the attribution is written.
+
 Add `--reference-polygons REF.geojson` if you happen to have existing polygons to
 compare against. You usually won't; everything important works without them.
 
