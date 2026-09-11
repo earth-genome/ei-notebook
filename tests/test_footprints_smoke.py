@@ -148,7 +148,7 @@ def main(keep=False):
         if rc:
             return
 
-        cfgs = glob.glob(os.path.join(work, 'out', 'pq_*_config.txt'))
+        cfgs = glob.glob(os.path.join(work, 'out', 'run_pq_*', 'pq_*_config.txt'))
         cfg = cfgs[0]
         stats = cfg.replace('_config.txt', '_stats.txt')
         for suffix in ('_footprints.geojson', '_patches_filtered.geojson',
@@ -177,9 +177,8 @@ def main(keep=False):
         check('label gate excludes nothing in clean data', gate == '0',
               f'{gate} excluded')
 
-        rounds = re.findall(r'^ ?\*?\s+(\d)\s+\d', text, re.M)
         n_rounds = len(glob.glob(os.path.join(
-            work, 'out', 'pq_*_round*_footprints.geojson')))
+            work, 'out', 'run_pq_*', 'pq_*_round*_footprints.geojson')))
         check('hard-negative rounds actually run', n_rounds >= 2,
               f'{n_rounds} rounds emitted')
 
@@ -197,7 +196,8 @@ def main(keep=False):
                       work, 'sel0.log')
         check('--select-round 0 runs', rc == 0)
         if rc == 0:
-            c0 = glob.glob(os.path.join(work, 'out', 'sel0_*_config.txt'))[0]
+            c0 = glob.glob(os.path.join(work, 'out', 'run_sel0_*',
+                                        'sel0_*_config.txt'))[0]
             check('--select-round 0 emits round 0',
                   'round 0, which was emitted' in open(
                       c0.replace('_config.txt', '_stats.txt')).read()
@@ -216,7 +216,7 @@ def main(keep=False):
                   '' if rc == 0 else out.strip().splitlines()[-1])
             if rc == 0:
                 import shapely
-                dbcfg = glob.glob(os.path.join(work, 'out',
+                dbcfg = glob.glob(os.path.join(work, 'out', 'run_db_*',
                                                'db_*_config.txt'))[0]
                 a = gpd.read_file(cfg.replace('_config.txt',
                                               '_footprints.geojson'))

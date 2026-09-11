@@ -79,10 +79,15 @@ except ImportError:  # evaluation is optional
 
 
 def main(args):
-    os.makedirs(args.outdir, exist_ok=True)
     stamp = datetime.now().isoformat(timespec='minutes').replace(':', '')
     basename = f'{args.tag}_{stamp}'
-    ctx = {'basename': basename}
+    # One directory per run, so a run's ~20 files stay together instead of
+    # interleaving with every other run's in a shared --outdir. Filenames keep
+    # the tag+timestamp prefix: files get copied out of these folders one at a
+    # time, and the prefix is what identifies which run they came from.
+    run_dir = os.path.join(args.outdir, f'run_{basename}')
+    os.makedirs(run_dir, exist_ok=True)
+    ctx = {'basename': basename, 'run_dir': run_dir}
 
     # --- Backend and grid ---------------------------------------------------
     backend = make_backend(args)
@@ -520,11 +525,11 @@ def main(args):
 
     for beta in dict.fromkeys([1.0, 0.25, args.beta]):
         fig = fbeta_curve_fig(y, oof, beta, threshold)
-        fig.savefig(os.path.join(args.outdir,
+        fig.savefig(os.path.join(run_dir,
                                  f'{basename}_fbeta_F{beta:g}.png'), dpi=140)
         plt.close(fig)
     fig = pr_curve_fig(y, oof)
-    fig.savefig(os.path.join(args.outdir, f'{basename}_pr.png'), dpi=140)
+    fig.savefig(os.path.join(run_dir, f'{basename}_pr.png'), dpi=140)
     plt.close(fig)
 
     # --- Step 7: statistics -------------------------------------------------
@@ -571,7 +576,7 @@ def main(args):
     written = []
 
     def to_file(gdf, suffix):
-        path = os.path.join(args.outdir, f'{basename}_{suffix}.geojson')
+        path = os.path.join(run_dir, f'{basename}_{suffix}.geojson')
         if len(gdf) == 0:
             warn(f'{suffix}: nothing to write (0 features); file skipped.')
             return
@@ -700,7 +705,7 @@ def main(args):
                 geometry=list(polys_n), crs=metric_crs)
             to_file(gdf, f'round{n}_footprints')
 
-    model_path = os.path.join(args.outdir, f'{basename}_model.joblib')
+    model_path = os.path.join(run_dir, f'{basename}_model.joblib')
     joblib.dump({'model': model, 'threshold': threshold,
                  'feature_columns': backend.feature_cols,
                  'metric_crs': ctx['metric_crs']}, model_path)
@@ -711,11 +716,11 @@ def main(args):
     if convergence:
         warn(convergence)
 
-    stats_path = os.path.join(args.outdir, f'{basename}_stats.txt')
+    stats_path = os.path.join(run_dir, f'{basename}_stats.txt')
     write_stats(stats_path, args, backend, ctx)
     written.append(stats_path)
 
-    config_path = os.path.join(args.outdir, f'{basename}_config.txt')
+    config_path = os.path.join(run_dir, f'{basename}_config.txt')
     write_config(config_path, args, backend, ctx)
     written.append(config_path)
 
@@ -729,7 +734,7 @@ def main(args):
             report, layers = evaluate_footprints.evaluate(
                 footprints, ref, metric_crs=metric_crs)
             written += evaluate_footprints.write_evaluation(
-                report, layers, args.outdir, basename,
+                report, layers, run_dir, basename,
                 footprints_path=f'{basename}_footprints.geojson',
                 reference_path=args.reference_polygons)
             print(evaluate_footprints.format_report(
@@ -766,7 +771,9 @@ def parse_args(argv=None):
     io.add_argument('--reference-polygons',
                     help='Optional reference footprints; triggers the '
                          'evaluation report.')
-    io.add_argument('--outdir', default='runs', help='Output directory.')
+    io.add_argument('--outdir', default='runs',
+                    help='Parent directory. Each run writes its files into a '
+                         'run_<tag>_<timestamp>/ folder inside it.')
     io.add_argument('--tag', default='run', help='Output basename prefix.')
     io.add_argument('--select-round', default='auto',
                     help='Which round becomes the run output: "auto" (default: '
