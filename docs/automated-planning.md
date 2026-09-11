@@ -1484,6 +1484,42 @@ time here.
 | **F-beta curve raggedness as a failure signal** | Not even monotonic: the best Kansas run shows 4 disconnected plateaus, failed New Mexico runs show 2. Demoted to context-only. |
 | **Detections as a share of the AOI** as a flag | Density-dependent; false-flags a facility-dense area and the synthetic fixture. Replaced by detections per known positive (threshold 50), which separates 12-34 good from 71-306 bad. |
 | **Unlimited hard-negative mining** | 5,127 mined negatives cost 8% of recall in New Mexico by mining unlisted real facilities. 150 per round is better on every axis. |
+| **`--footprint-geometry stride`** | Turkiye, 2026-09-11. Splits merged clusters as intended -- 715 polygons against 343, largest 125 ha against 3,577, total area 27,206 -> 3,581 ha -- but under-constructs each facility: median footprint 5.3 ha. Reviewed against imagery: too small. See below. |
+| **Intermediate cell sizes (`--patch-size-m 300`)** | Turkiye, 2026-09-11. Splits the largest polygons modestly, but punches holes: at 300 m on a 164 m grid neighbouring cells overlap by 136 m instead of 164 m, so a non-firing patch inside a facility is no longer covered by its neighbours. Holes and added complexity for little gain. The default 2 x stride is the size at which neighbours close each other's gaps. |
+
+## Turkiye variant tests (2026-09-11)
+
+Four variants run against the default configuration (`run_1`: gated, patch
+geometry, `--select-round auto`, which chose round 2). The reviewer's verdict in
+QGIS was that **`run_1` wins in every comparison**. Recorded because each variant
+was a plausible idea that the metrics alone would have scored differently.
+
+| variant | outcome | verdict |
+|---|---|---|
+| `--select-round 4` | Breaks the largest polygons into smaller but still large ones; recall(all) 88.7% -> 85.4% | Tightening does not outweigh the recall loss. **Auto-selection chose correctly.** |
+| `--footprint-geometry stride` | Clusters split cleanly, flags 6/11 -> 3/11, but median footprint 5.3 ha | Under-constructs facility extent. Truth is between patch and stride, **closer to patch**. |
+| `--patch-size-m 300` | Modest splitting of the largest polygons | Holes and complexity; not worth it. |
+| `--drop-positives-below 0` | At `--select-round auto`: catastrophic, largest polygon 21,846 ha. Pinned to round 2: close to `run_1`, including recall. | The bloat was **selection, not the missing gate**. See below. |
+
+**Round selection and the gate interact, and it is not obvious.** With gating on,
+`recall(trained)` is pinned at 100% across rounds, so `select_best_round` breaks
+the tie on ha/positive and picks the tightest. Turn gating off and unsupported
+positives stay in the trained set, where they are only covered when polygons grow
+enormous -- so `recall(trained)` starts varying (95.5, 98.6, 87.2, 93.0, 93.4)
+and the recall-first rule becomes **actively blob-favouring**. It selected round
+1, containing the 21,846 ha polygon, while round 2 sat available at ha/positive
+45.1 with a 1,899 ha maximum, ineligible at 87.2% recall. Pin `--select-round`
+whenever `--drop-positives-below 0` is used.
+
+The corollary for comparisons: any variant that perturbs `recall(trained)` can
+change which round is emitted, so a geometry or gating comparison run at
+`--select-round auto` is confounded. All four variants above were re-run pinned.
+
+**`RECALL_TOLERANCE` was suspected of being too tight and is not.** On geometry
+metrics alone, Turkiye's round 4 and Kansas's converged round 4 both looked
+better than the round selection chose, suggesting the 0.005 band should widen.
+Human review said otherwise in both cases: the recall those rounds give up is
+worth more than the tightening they buy. The rule stands.
 
 ## Operational notes for whoever runs this next
 
