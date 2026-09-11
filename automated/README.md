@@ -66,13 +66,21 @@ keys on:
 python3 automated/fetch_embeddings.py \
     --region AOI.geojson \
     --start 2025-01-01 --end 2025-12-31 \
-    --name myaoi --outdir . --build-duckdb
+    --name myaoi --outdir . --jobs 6 --build-duckdb
 ```
 
 Ask for the calendar year you want. Yearly embeddings run 1 January to 1 January,
 so that window also touches the previous vintage and the catalogue returns both;
 the one your window genuinely overlaps is kept, and the period the catalogue
 reports is what lands in the filename.
+
+`--jobs` is worth setting. One HTTP stream to the asset host measured 33 MB/s,
+so downloads run concurrently; the useful number is however many streams it
+takes to saturate your disk. On a 600 GB `pd-balanced` volume, which takes about
+170 MB/s, that is 5 or 6 — beyond that the writes just queue. The run prints an
+aggregate MB/s per completed tile, so you can see where it flattens. Tiles are
+around 320 MB each, and a partly finished download resumes without re-fetching
+what completed.
 
 Two options matter for large areas:
 
