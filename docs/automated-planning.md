@@ -882,7 +882,48 @@ wrong".
 
 To settle any of this properly, per-round footprints need saving (currently only
 the final round is written), which is cheap since the geometry is already
-computed.
+computed. *(Resolved 2026-09-11: every round's footprints are now written by
+default; `--no-save-round-outputs` opts out.)*
+
+## Attributing footprints to facilities (2026-09-11)
+
+The positive-to-footprint relation is many-to-many, so no single facility-id
+column on the footprints can carry it. Measured on Australia east: of 610 matched
+facilities, 604 map to one polygon and **6 are bracketed across two**; of 580
+polygons, 550 hold one facility and **30 hold two or three**. 89% of pairs are a
+clean one-to-one, which is exactly enough to make a single id column tempting and
+wrong.
+
+What the pipeline does:
+
+- A facility's disjoint pieces are reassembled into one MultiPolygon row, **but
+  only where every piece belongs to that facility alone**. Two of Australia's six
+  bracketed cases share a polygon with a neighbour; absorbing it would attribute
+  the neighbour's ground to this facility, which is worse than leaving the pieces
+  apart. Those keep their shared polygon and are resolved through the crosswalk.
+- `positive_ids` on each footprint, `positive_id` on `positives_uncovered`, and
+  `*_positive_to_footprint.csv` for the relation in both directions.
+- Identifiers come from `--positive-id-field`, taken in `load_points` before any
+  row is dropped: positives are later discarded for falling outside the boundary
+  or landing too far from a patch, so ids assigned afterwards point at the wrong
+  rows of the caller's file.
+- When a merge happens, `poly_id` in `detections_raw` and `patches_filtered` is
+  repointed at the surviving polygon, so all four layers share one id space.
+- `positives_uncovered` is derived from the emitted footprints rather than the
+  pre-merge match, which gives the property the delivery workflow needs: the
+  footprints and the uncovered layer **partition the register**. Verified on
+  Kansas: 1,210 covered + 160 uncovered = 1,370 of 1,371, the remainder being the
+  one positive dropped outside the boundary.
+
+The reassembly path is not reachable from Kansas, which has no fragmented
+facilities. The smoke fixture therefore carries one built deliberately: two
+firing patches three strides apart -- as far as they can be while the shared
+point stays within match tolerance of both -- with the corridor between them held
+firmly background, since a single spurious detection there bridges the cells and
+the facility arrives whole. Adding it immediately surfaced a crash: `cells` and
+`confidence` arrive from `pandas.to_numpy()`, which can return a read-only view,
+so reassembly raised `ValueError: assignment destination is read-only`. Every run
+containing a fragmented facility would have died there, and Australia has four.
 
 ## Files
 
