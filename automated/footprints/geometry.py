@@ -5,10 +5,14 @@ CRS chosen from the data. detect_stride() recovers the centroid spacing of the
 embedding grid, which sets the footprint cell size.
 """
 
+import os
+
 import geopandas as gpd
 import numpy as np
 import shapely
 from pyproj import CRS, Transformer
+
+from .util import warn
 
 
 def project(coords, src_crs, dst_crs):
@@ -47,6 +51,29 @@ def build_squares(centroids_m, size_m):
     half = size_m / 2.0
     return shapely.box(centroids_m[:, 0] - half, centroids_m[:, 1] - half,
                        centroids_m[:, 0] + half, centroids_m[:, 1] + half)
+
+
+def load_boundary(path, metric_crs):
+    """Read a boundary file and return one geometry in the metric CRS.
+
+    Parts are repaired before they are dissolved. Published administrative
+    boundaries -- GADM especially -- routinely contain self-intersections and
+    misordered rings, and unioning them raw throws "side location conflict"
+    from GEOS. Repairing first costs a pass over the geometry and turns a crash
+    into a usable AOI.
+    """
+    parts = gpd.read_file(path).to_crs(metric_crs).geometry.to_numpy()
+    invalid = ~shapely.is_valid(parts)
+    if invalid.any():
+        warn(f'{int(invalid.sum())} of {len(parts)} boundary parts in '
+             f'{os.path.basename(path)} are invalid; repairing.')
+        parts = shapely.make_valid(parts)
+    try:
+        return shapely.union_all(parts)
+    except shapely.errors.GEOSException:
+        # Snapping to a millimetre grid clears the residual cases, well below
+        # any precision a boundary carries.
+        return shapely.union_all(parts, grid_size=0.001)
 
 
 def boundary_mask(centroids_m, boundary_geom):

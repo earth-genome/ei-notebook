@@ -61,7 +61,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from footprints.backends import make_backend  # noqa: E402
 from footprints.geometry import (boundary_mask, build_squares,  # noqa: E402
-                                choose_metric_crs, detect_stride, project)
+                                choose_metric_crs, detect_stride,
+                                load_boundary, project)
 from footprints.inference import positive_polygon_pairs  # noqa: E402
 from footprints.labels import (load_points, sample_negatives,  # noqa: E402
                                snap_positives)
@@ -126,8 +127,7 @@ def main(args):
     boundary_geom = None
     if args.boundary:
         log(f'Clipping the patch set to {args.boundary}...')
-        boundary_geom = gpd.read_file(args.boundary).to_crs(
-            metric_crs).geometry.union_all()
+        boundary_geom = load_boundary(args.boundary, metric_crs)
         keep_mask = boundary_mask(centroids_m, boundary_geom)
     else:
         keep_mask = np.ones(backend.n_patches, dtype=bool)
