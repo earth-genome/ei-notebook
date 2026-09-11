@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -230,30 +231,61 @@ def filter_to_positives(items, positives_path, buffer_km):
 # Download
 # --------------------------------------------------------------------------- #
 
-def download(items, dest, asset='embeddings'):
-    """Fetch each tile's asset, skipping any already on disk."""
+def _fetch_one(url, path):
+    """Download one asset to path, via a .part file. Returns bytes written."""
     import requests
+    tmp = path.with_suffix(path.suffix + '.part')
+    n = 0
+    with requests.get(url, stream=True, timeout=(30, 300)) as r:
+        if r.status_code >= 300:
+            raise RuntimeError(f'{url} returned HTTP {r.status_code}')
+        with open(tmp, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1 << 20):
+                f.write(chunk)
+                n += len(chunk)
+    # Renamed only once complete, so an interrupted run resumes cleanly instead
+    # of leaving a truncated file that looks downloaded.
+    tmp.rename(path)
+    return n
+
+
+def download(items, dest, asset='embeddings', jobs=4):
+    """Fetch each tile's asset, skipping any already on disk.
+
+    Downloads run concurrently because a single HTTP stream to the asset host
+    tops out well below what the machine can take -- the work is waiting on the
+    network, not on the CPU, so threads are the right tool. Raise --jobs if the
+    per-connection rate is the limit; it will not help if the disk is.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     dest.mkdir(parents=True, exist_ok=True)
-    paths, fetched = [], 0
-    for i, item in enumerate(items, 1):
+    paths, todo = [], []
+    for item in items:
         url = item.assets[asset].href
         path = dest / Path(url).name
         paths.append(path)
-        if path.exists() and path.stat().st_size > 0:
-            continue
-        log(f'  [{i}/{len(items)}] {path.name}')
-        tmp = path.with_suffix(path.suffix + '.part')
-        with requests.get(url, stream=True) as r:
-            if r.status_code >= 300:
-                raise SystemExit(f'{url} returned HTTP {r.status_code}')
-            with open(tmp, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=1 << 20):
-                    f.write(chunk)
-        # Rename only once complete, so an interrupted run resumes cleanly
-        # instead of leaving a truncated file that looks downloaded.
-        tmp.rename(path)
-        fetched += 1
-    log(f'  {fetched} downloaded, {len(paths) - fetched} already present')
+        if not (path.exists() and path.stat().st_size > 0):
+            todo.append((url, path))
+    log(f'  {len(paths) - len(todo)} already present, {len(todo)} to fetch '
+        f'({jobs} at a time)')
+
+    t0, done, total_bytes = time.time(), 0, 0
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(_fetch_one, u, p): p for u, p in todo}
+        try:
+            for fut in as_completed(futures):
+                path = futures[fut]
+                total_bytes += fut.result()
+                done += 1
+                rate = total_bytes / 1e6 / max(1e-9, time.time() - t0)
+                log(f'  [{done}/{len(todo)}] {path.name}  '
+                    f'{rate:.0f} MB/s aggregate')
+        except Exception:
+            # Leave finished files in place; .part files are ignored on resume.
+            for fut in futures:
+                fut.cancel()
+            raise
+    log(f'  {done} downloaded, {len(paths) - len(todo)} already present')
     return paths
 
 
@@ -415,7 +447,7 @@ def main(args):
             log(f'--dry-run: {len(items)} tiles would be fetched')
             return
         log(f'Downloading {len(items)} tiles to {tmp}')
-        paths = download(items, tmp)
+        paths = download(items, tmp, jobs=args.jobs)
     if not period:
         raise SystemExit('Could not determine the embedding period; '
                          'pass --period YYYYMMDD-YYYYMMDD.')
@@ -515,6 +547,11 @@ def parse_args(argv=None):
                           'before 2024 are in sentinel2-embeddings.')
     cat.add_argument('--max-items', type=int, default=2000,
                      help='Refuse a truncated search above this.')
+    cat.add_argument('--jobs', type=int, default=4, metavar='N',
+                     help='Concurrent downloads (default 4). A single stream to '
+                          'the asset host runs well below line rate, so this is '
+                          'the main lever on download time -- unless the disk is '
+                          'the bottleneck, in which case it changes nothing.')
 
     out = p.add_argument_group('output')
     out.add_argument('--name', required=True,
