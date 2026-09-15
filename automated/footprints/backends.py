@@ -19,6 +19,12 @@ from pyproj import CRS
 from .util import log, warn
 
 
+# Columns that describe a patch rather than embed it. Anything else in the
+# table is a feature, so a stray column here would be fed to the classifier as
+# an extra dimension.
+META_COLS = ('tile_id', 'geometry', 'epsg')
+
+
 class EmbeddingBackend:
     """Common interface over the two embedding storage layouts.
 
@@ -29,6 +35,8 @@ class EmbeddingBackend:
             with centroids_ll.
         centroids_ll: (N, 2) array of lon/lat patch centroids.
         source_crs: CRS of the stored geometry.
+        epsg: Per-patch CRS the chip was cut in, or None if the inputs predate
+            the column. Used to rebuild footprint cells in their own frame.
 
     Methods:
         fetch: Gather embedding vectors for a set of positions.
@@ -40,6 +48,7 @@ class EmbeddingBackend:
     ids = None
     centroids_ll = None
     source_crs = None
+    epsg = None
     kind = 'abstract'
 
     def fetch(self, positions):
@@ -57,6 +66,25 @@ def _col_to_numpy(col):
     if isinstance(col, pa.ChunkedArray):
         return col.to_numpy()
     return col.to_numpy(zero_copy_only=False)
+
+
+def _read_epsg(path, n_expected):
+    """Per-patch source CRS codes from a parquet, or None if unusable."""
+    codes = _col_to_numpy(pq.read_table(path, columns=['epsg']).column('epsg'))
+    codes = np.asarray(codes)
+    if len(codes) != n_expected:
+        warn(f'epsg column has {len(codes):,} rows but the patch set has '
+             f'{n_expected:,}; ignoring it and building cells in the working '
+             'CRS.')
+        return None
+    if np.any(pd.isna(codes)):
+        warn(f'{int(pd.isna(codes).sum()):,} patches have no epsg; ignoring '
+             'the column and building cells in the working CRS.')
+        return None
+    codes = codes.astype('i8')
+    log(f'Patch cells will be built in {len(np.unique(codes))} source CRS(s) '
+        'and reprojected.')
+    return codes
 
 
 def _batch_to_array(batch, n_features, columns=None):
@@ -82,7 +110,7 @@ class ParquetBackend(EmbeddingBackend):
 
         self.pf = pq.ParquetFile(path)
         names = list(self.pf.schema_arrow.names)
-        self.feature_cols = [c for c in names if c not in ('tile_id', 'geometry')]
+        self.feature_cols = [c for c in names if c not in META_COLS]
         self.n_features = len(self.feature_cols)
         self.n_patches = self.pf.metadata.num_rows
 
@@ -91,6 +119,8 @@ class ParquetBackend(EmbeddingBackend):
             f'{self.n_features} features, {self.pf.metadata.num_row_groups} '
             f'row group(s)')
         self._read_centroids()
+        self.epsg = (_read_epsg(path, self.n_patches) if 'epsg' in names
+                     else None)
 
     def _read_crs(self):
         meta = self.pf.schema_arrow.metadata or {}
@@ -227,7 +257,7 @@ class DuckDBBackend(EmbeddingBackend):
             f'DESCRIBE {self.table}').fetchall()]
         if 'tile_id' not in cols:
             raise SystemExit(f'Table {table} has no tile_id column.')
-        self.feature_cols = [c for c in cols if c != 'tile_id']
+        self.feature_cols = [c for c in cols if c not in META_COLS]
         self.n_features = len(self.feature_cols)
         self._select = ', '.join(f'"{c}"' for c in self.feature_cols)
 
@@ -243,6 +273,9 @@ class DuckDBBackend(EmbeddingBackend):
         self.ids = self.tile_ids
         self.n_patches = len(self.tile_ids)
         self.source_crs = self._read_crs(centroids_path)
+        has_epsg = 'epsg' in pq.ParquetFile(centroids_path).schema_arrow.names
+        self.epsg = (_read_epsg(centroids_path, self.n_patches)
+                     if has_epsg else None)
 
         if n_db != self.n_patches:
             warn(f'DuckDB rows ({n_db:,}) != centroids ({self.n_patches:,}). '

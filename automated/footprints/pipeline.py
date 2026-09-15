@@ -88,7 +88,8 @@ def detect_and_filter(env, model, threshold):
     det_points = shapely.points(det_xy) if len(det_xy) else np.zeros(0, object)
 
     log('Merging detected patches into polygons...')
-    squares = build_squares(det_xy, env['cell_size_m'])
+    det_frames = env['frames'].take(det_positions)
+    squares = build_squares(det_xy, env['cell_size_m'], det_frames)
     polys = merge_to_polygons(squares, env['args'].merge_buffer_m,
                               env['args'].gap_close_m)
     log(f'Merged into {len(polys):,} polygons')
@@ -111,6 +112,7 @@ def detect_and_filter(env, model, threshold):
         'det_probs': det_probs,
         'det_xy': det_xy,
         'det_points': det_points,
+        'det_frames': det_frames,
         'polys': polys,
         'owner': owner,
         'counts': counts,

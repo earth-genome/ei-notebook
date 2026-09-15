@@ -89,8 +89,12 @@ X[np.ix_(bridge, np.arange(8))] = rng.integers(0, 30, size=(len(bridge), 8))
 geom = shapely.box(lon - dlon, lat - dlat, lon + dlon, lat + dlat)
 tile_id = np.array([f'14SXX_{i}_{j}' for i, j in zip(ix.ravel(), iy.ravel())],
                    dtype=object)
+# The CRS each chip was cut in, as fetch_embeddings records it. Carried so the
+# fixture exercises the column end to end -- above all that it stays out of the
+# feature matrix, since every column but the id is otherwise read as a feature.
+epsg = np.full(n, 32614, dtype='i4')   # UTM 14N, the zone lon0 sits in
 tbl = pa.table({**{f'vit-dino-patch16_{k}': X[:, k] for k in range(384)},
-                'tile_id': pa.array(tile_id)})
+                'tile_id': pa.array(tile_id), 'epsg': pa.array(epsg)})
 gpd.GeoDataFrame(tbl.to_pandas(), geometry=list(geom), crs='EPSG:4326'
                  ).to_parquet('synth_embeddings.parquet', index=False)
 pts = [shapely.Point(lon0 + a * dlon, lat0 + b * dlat)
@@ -188,6 +192,26 @@ def main(keep=False):
         check('assessment passes on clean data',
               'RUN ASSESSMENT: all' in text,
               re.search(r'RUN ASSESSMENT: [^\n]*', text).group(0))
+
+        # The epsg column must not reach the feature matrix: everything but the
+        # id is read as a feature, so a leak shows up as a 385th dimension that
+        # is the same constant for every patch.
+        conf = open(cfg).read()
+        dim = re.search(r'Embedding dimension:\s+(\d+)', conf)
+        check('epsg stays out of the feature matrix',
+              dim and dim.group(1) == '384',
+              f'{dim.group(1) if dim else "?"} features')
+        check('cells built in the source CRS',
+              'Cells built in:           1 source CRS' in conf,
+              re.search(r'Cells built in:\s+([^\n]*)', conf).group(1))
+
+        # The grid is a 160 m ladder, so the stride must be measured as such
+        # whatever CRS the run picked. Nearest-neighbour spacing used to land
+        # 7-15% high here and squared that error into every area.
+        got = re.search(r'Measured grid stride:\s+([\d.]+) m', conf)
+        check('stride measured at the grid constant',
+              got and abs(float(got.group(1)) - 160.0) < 3.2,
+              f'{got.group(1) if got else "?"} m vs 160 m')
 
         # recall(trained) must never exceed 100% -- it did once, when a new way
         # of removing positives was not reflected in the numerator.

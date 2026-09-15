@@ -74,12 +74,13 @@ def write_config(path, args, backend, ctx):
         w(f'  Patches in dataset:      {backend.n_patches:,}\n')
         w(f'  Patches in working AOI:  {ctx["n_work"]:,}\n')
         w(f'  Embedding dimension:     {backend.n_features}\n')
-        w(f'  Detected centroid stride: {ctx["stride_m"]:.2f} m\n')
+        w(f'  Measured grid stride:     {ctx["stride_m"]:.2f} m\n')
         w(f'  Footprint cell size:      {ctx["cell_size_m"]:.2f} m '
           f'({args.footprint_geometry} mode, '
           f'{ctx["cell_size_m"]**2/1e4:.2f} ha per cell)\n')
         w(f'  Metric CRS:               {ctx["metric_crs"]}\n')
-        w(f'  Source CRS:               {backend.source_crs.to_string()}\n\n')
+        w(f'  Source CRS:               {backend.source_crs.to_string()}\n')
+        w(f'  Cells built in:           {ctx.get("cell_frames", "?")}\n\n')
 
         w('-- Parameters ' + '-' * 59 + '\n')
         for k, v in sorted(vars(args).items()):
@@ -281,10 +282,11 @@ def write_stats(path, args, backend, ctx):
         w(f'  Patches in dataset:       {backend.n_patches:,}\n')
         w(f'  Patches in working AOI:   {ctx["n_work"]:,}'
           f'{"  (clipped to --boundary)" if args.boundary else ""}\n')
-        w(f'  Centroid stride:          {ctx["stride_m"]:.2f} m\n')
+        w(f'  Grid stride:              {ctx["stride_m"]:.2f} m\n')
         w(f'  Footprint cell:           {ctx["cell_size_m"]:.2f} m '
           f'= {ctx["cell_size_m"]**2/1e4:.2f} ha ({args.footprint_geometry})\n')
-        w(f'  Metric CRS:               {ctx["metric_crs"]}\n\n')
+        w(f'  Metric CRS:               {ctx["metric_crs"]}\n')
+        w(f'  Cells built in:           {ctx.get("cell_frames", "?")}\n\n')
 
         w('-- Detections ' + '-' * 59 + '\n')
         w(f'  Selected threshold:       {ctx["selection"]["threshold"]:.6f}\n')

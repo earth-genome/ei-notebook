@@ -19,7 +19,7 @@ import heapq
 import numpy as np
 import shapely
 
-from .geometry import build_squares
+from .geometry import build_squares, geodesic_area_ha
 from .util import log
 
 
@@ -153,7 +153,7 @@ def single_facility_reach(patch_xy, patch_poly, pos_xy, pairs_pos, pairs_poly):
 
 def split_footprints(kept_idx, patch_xy, patch_poly, pos_xy, pos_ids,
                      pairs_pos, pairs_poly, cell_size_m, grow,
-                     max_dist=None):
+                     max_dist=None, frames=None, metric_crs=None):
     """One row per covered facility, plus what could not be attributed.
 
     Every covered facility gets a row, including those whose footprint needed no
@@ -176,7 +176,10 @@ def split_footprints(kept_idx, patch_xy, patch_poly, pos_xy, pos_ids,
         if len(sel) == 0:
             continue
         xy = patch_xy[sel]
-        squares = build_squares(xy, cell_size_m)
+        # The same cells the footprints were merged from, so the parts a split
+        # produces reconstruct the parent exactly.
+        squares = build_squares(xy, cell_size_m,
+                                None if frames is None else frames.take(sel))
         seed_xy = pos_xy[members]
 
         if len(members) == 1:
@@ -238,6 +241,13 @@ def split_footprints(kept_idx, patch_xy, patch_poly, pos_xy, pos_ids,
                 'area_ha': float(shapely.area(geom) / 1e4),
                 'geometry': geom,
             })
+    # Areas in one pass at the end: measuring on the ellipsoid means a
+    # reprojection, and doing that per row would cost more than the split.
+    if rows and metric_crs is not None:
+        areas = geodesic_area_ha([r['geometry'] for r in rows], metric_crs)
+        for row, area in zip(rows, areas):
+            row['area_ha'] = float(area)
+
     log(f'  {n_split} footprints divided between facilities; '
         f'{len(rows)} rows'
         + (f', {n_capped:,} patches beyond {max_dist:,.0f} m left unattributed'

@@ -47,7 +47,7 @@ def main(positives, model, centroids, duckdb, out, radius_m=None,
     metric_crs = choose_metric_crs(backend.centroids_ll, backend.source_crs)
     centroids_m = project(backend.centroids_ll, backend.source_crs, metric_crs)
     tree = cKDTree(centroids_m)
-    stride = detect_stride(tree, centroids_m)
+    stride = detect_stride(backend.centroids_ll)
     radius = radius_m if radius_m is not None else 3 * stride
     print(f'  stride {stride:.1f} m; neighbourhood radius {radius:.0f} m')
 

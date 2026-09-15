@@ -41,6 +41,7 @@ made 64 GB machines swap.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import time
@@ -304,6 +305,46 @@ def quantize(values, lower=-5.0, upper=5.0):
     return ((clipped - lower) / (upper - lower) * 255).astype(np.uint8)
 
 
+# Asset filenames lead with the MGRS tile: 18TWN_2025-01-01_2026-01-01.parquet.
+# Latitude bands run C-X with I and O skipped; C-M are southern.
+MGRS_RE = re.compile(r'^T?([0-9]{1,2})([C-HJ-NP-X])[A-Z]{2}(?![0-9A-Z])')
+
+
+def tile_epsg(path):
+    """UTM code of the MGRS tile a downloaded asset covers, or None.
+
+    Read from the filename rather than from the patch coordinates. MGRS tiles
+    straddle zone boundaries, so a centroid's longitude is not reliably the zone
+    the imagery was cut in, and guessing wrong would silently misplace cells
+    along exactly the seams where it matters.
+    """
+    m = MGRS_RE.match(Path(path).name)
+    if not m:
+        return None
+    zone, band = int(m.group(1)), m.group(2)
+    if not 1 <= zone <= 60:
+        return None
+    return (32700 if band < 'N' else 32600) + zone
+
+
+def plan_epsg(paths):
+    """Per-tile UTM codes, or None if any filename cannot be resolved.
+
+    All or nothing: a partly-populated column would leave some cells built in
+    their own frame and others not, for no reason a reader could see.
+    """
+    codes = [tile_epsg(p) for p in paths]
+    bad = [Path(p).name for p, c in zip(paths, codes) if c is None]
+    if bad:
+        warn(f'could not read an MGRS tile from {len(bad)} filename(s), e.g. '
+             f'{bad[0]}; writing no epsg column, so footprint cells will be '
+             'built in the working CRS as they were before.')
+        return None
+    log('  source CRSs: ' + ', '.join(
+        f'EPSG:{c} x{codes.count(c)}' for c in sorted(set(codes))))
+    return codes
+
+
 def tile_centroids(path):
     """Centroid coordinates of one tile, as rounded integer keys.
 
@@ -354,7 +395,8 @@ def plan_dedupe(paths, clip_geom=None):
     return [keep[owner == i] for i in range(len(paths))], int(keep.sum()), total
 
 
-def write_shards(paths, keep_masks, n_kept, shard_dir, quantized=True):
+def write_shards(paths, keep_masks, n_kept, shard_dir, quantized=True,
+                 epsgs=None):
     """One deduped, quantized GeoParquet shard per input tile.
 
     Shards rather than one streamed writer because geopandas owns the GeoParquet
@@ -364,6 +406,11 @@ def write_shards(paths, keep_masks, n_kept, shard_dir, quantized=True):
 
     tile_id is the row number across the whole region, zero-padded to a fixed
     width so every id is the same length and ids sort lexically.
+
+    epsgs, when given, records per patch the UTM zone its chip was cut in. The
+    grid of patch centres is geographic, but each chip is square in its own
+    tile's zone, so that code is what lets a footprint cell be rebuilt in the
+    frame it actually occupies rather than in whichever CRS the run measures in.
     """
     shard_dir.mkdir(parents=True, exist_ok=True)
     width = len(str(max(0, n_kept - 1)))
@@ -381,6 +428,8 @@ def write_shards(paths, keep_masks, n_kept, shard_dir, quantized=True):
                 for k in range(feats.shape[1])}
         cols['tile_id'] = [f'{n:0{width}d}'
                            for n in range(next_id, next_id + len(gdf))]
+        if epsgs is not None:
+            cols['epsg'] = np.full(len(gdf), epsgs[i - 1], dtype='i4')
         next_id += len(gdf)
         # The CRS is set explicitly: some published tiles carry none, and a
         # missing CRS surfaces much later as a silent reprojection error.
@@ -477,7 +526,8 @@ def main(args):
     shard_dir = Path(args.shard_dir or outdir / 'shards-tmp')
     log(f'Assembling shards in {shard_dir}')
     shards, written = write_shards(paths, keep_masks, n_kept, shard_dir,
-                                   quantized=not args.no_quantize)
+                                   quantized=not args.no_quantize,
+                                   epsgs=plan_epsg(paths))
 
     log(f'Combining {len(shards)} shards into {out_path}')
     concat_shards(shards, out_path)

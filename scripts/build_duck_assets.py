@@ -15,6 +15,10 @@ import pandas as pd
 import psutil
 from tqdm import tqdm
 
+# Per-patch source CRS, written by automated/fetch_embeddings.py. Optional:
+# parquets built before it existed simply have no such column.
+EPSG_COLUMN = "epsg"
+
 def print_mem_usage(note=''):
     mem = psutil.virtual_memory()
     print(
@@ -69,7 +73,14 @@ def main(
         update_duck_db(con, gdf, table_name, geometry_col=geometry_col)
         print_mem_usage("DuckDB updated")
 
-        centroid_gdf = gdf.loc[:, [id_column, geometry_col]].copy()
+        # epsg, where present, records the CRS each patch's chip was cut in. It
+        # rides with the centroids rather than the embeddings: everything in the
+        # DuckDB table except the id is treated as a feature downstream, so a
+        # column left there would be read as an extra embedding dimension.
+        keep_cols = [id_column, geometry_col]
+        if EPSG_COLUMN in gdf.columns:
+            keep_cols.append(EPSG_COLUMN)
+        centroid_gdf = gdf.loc[:, keep_cols].copy()
         centroid_gdf[geometry_col] = centroid_gdf[geometry_col].centroid
         centroid_dfs.append(centroid_gdf)
 
@@ -88,8 +99,9 @@ def main(
     con.close()
 
 def update_duck_db(con, gdf, table_name="embeddings", geometry_col="geometry"):
-    """Write chunk of embeddings GeoDataFrame to DuckDB (no geometry column)."""
-    df = gdf.drop(columns=geometry_col)
+    """Write chunk of embeddings GeoDataFrame to DuckDB (no geometry or epsg)."""
+    drop = [geometry_col] + [c for c in (EPSG_COLUMN,) if c in gdf.columns]
+    df = gdf.drop(columns=drop)
     con.register("df", df)
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM df LIMIT 0"

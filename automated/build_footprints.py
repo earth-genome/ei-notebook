@@ -60,8 +60,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
 from footprints.backends import make_backend  # noqa: E402
-from footprints.geometry import (boundary_mask, build_squares,  # noqa: E402
+from footprints.geometry import (CellFrames, boundary_mask,  # noqa: E402
+                                build_squares,
                                 choose_metric_crs, detect_stride,
+                                geodesic_area_ha,
                                 load_boundary, project)
 from footprints.inference import positive_polygon_pairs  # noqa: E402
 from footprints.labels import (load_points, sample_negatives,  # noqa: E402
@@ -105,7 +107,16 @@ def main(args):
 
     log('Building spatial index...')
     full_tree = cKDTree(centroids_m)
-    stride_m = args.stride_m or detect_stride(full_tree, centroids_m, args.seed)
+    stride_m = args.stride_m or detect_stride(backend.centroids_ll)
+
+    # Cells are built in the CRS each chip was cut in, where they are genuinely
+    # square, then reprojected. Falls back to the working CRS for patch sets
+    # assembled before fetch_embeddings recorded an epsg column.
+    frames = CellFrames(backend.centroids_ll, backend.epsg,
+                        backend.source_crs, metric_crs)
+    ctx['cell_frames'] = (f'{len(frames.zones())} source CRS(s)'
+                          if frames.enabled else 'working CRS (no epsg column)')
+
     if args.footprint_geometry == 'patch':
         cell_size_m = args.patch_size_m or 2 * stride_m
     else:
@@ -227,7 +238,7 @@ def main(args):
         'keep_mask': keep_mask if args.boundary else None,
         'n_work': ctx['n_work'], 'cell_size_m': cell_size_m,
         'match_tol': match_tol, 'pos_points': shapely.points(pos_xy),
-        'pos_tree': cKDTree(pos_xy),
+        'pos_tree': cKDTree(pos_xy), 'frames': frames,
     }
     hard_min_dist = (args.hard_neg_min_dist_m
                      if args.hard_neg_min_dist_m is not None
@@ -382,8 +393,7 @@ def main(args):
         # Per-round output quality, so rounds can be compared and any one of
         # them can become the run's output. All of these are reference-free.
         kept_polys = result['polys'][np.flatnonzero(result['kept'])]
-        areas = (shapely.area(kept_polys) / 1e4 if len(kept_polys)
-                 else np.zeros(0))
+        areas = geodesic_area_ha(kept_polys, metric_crs)
         # Recall of the positives actually in training, patch against patch.
         # Derived from label_positions rather than by subtracting known
         # exclusions, so it stays correct however a positive left the set --
@@ -518,6 +528,7 @@ def main(args):
     det_positions = result['det_positions']
     det_probs = result['det_probs']
     det_xy, det_points = result['det_xy'], result['det_points']
+    det_frames = result['det_frames']
     polys, owner, counts = result['polys'], result['owner'], result['counts']
     matched_pos, kept = result['matched_pos'], result['kept']
     keep_patch = result['keep_patch']
@@ -555,8 +566,7 @@ def main(args):
 
     kept_idx = np.flatnonzero(kept)
     kept_polys = polys[kept_idx]
-    areas_ha = (shapely.area(kept_polys) / 1e4 if len(kept_polys)
-                else np.zeros(0))
+    areas_ha = geodesic_area_ha(kept_polys, metric_crs)
     ctx['areas_ha'] = areas_ha
 
     # Per-polygon aggregates in one grouped pass, rather than a mask per polygon.
@@ -612,7 +622,7 @@ def main(args):
             weights = np.maximum(cells[qs], 1)
             confidence[head] = float(np.average(confidence[qs], weights=weights))
             cells[head] = int(cells[qs].sum())
-            areas_ha[head] = float(shapely.area(merged) / 1e4)
+            areas_ha[head] = float(geodesic_area_ha([merged], metric_crs)[0])
             kept_polys[head] = merged
             for q in rest:
                 drop.add(int(q))
@@ -652,8 +662,8 @@ def main(args):
         gdf.to_crs('EPSG:4326').to_file(path, driver='GeoJSON')
         written.append(path)
 
-    raw_geom = (build_squares(det_xy, cell_size_m) if args.raw_as_polygons
-                else det_points)
+    raw_geom = (build_squares(det_xy, cell_size_m, det_frames)
+                if args.raw_as_polygons else det_points)
     raw = gpd.GeoDataFrame(
         {'probability': det_probs,
          'patch_id': backend.ids[det_positions],
@@ -665,7 +675,8 @@ def main(args):
         {'probability': det_probs[keep_patch],
          'patch_id': backend.ids[det_positions[keep_patch]],
          'poly_id': owner[keep_patch]},
-        geometry=list(build_squares(det_xy[keep_patch], cell_size_m)),
+        geometry=list(build_squares(det_xy[keep_patch], cell_size_m,
+                                    det_frames.take(keep_patch))),
         crs=metric_crs)
     to_file(filtered, 'patches_filtered')
 
@@ -726,7 +737,8 @@ def main(args):
         rows = split_footprints(
             kept_idx, patch_xy, patch_poly, pos_xy,
             pos['positive_id'].to_numpy(), pp, qq, cell_size_m,
-            args.merge_buffer_m + args.gap_close_m, max_dist=cap)
+            args.merge_buffer_m + args.gap_close_m, max_dist=cap,
+            frames=det_frames.take(keep_patch), metric_crs=metric_crs)
         if rows:
             split = gpd.GeoDataFrame(rows, geometry='geometry', crs=metric_crs)
             # The cap goes in the filename when one is set: choosing it means
@@ -818,7 +830,7 @@ def main(args):
              'n_patches': by_poly.size().reindex(all_idx,
                                                  fill_value=0).to_numpy(),
              'confidence': by_poly.prob.mean().reindex(all_idx).to_numpy(),
-             'area_ha': shapely.area(polys) / 1e4,
+             'area_ha': geodesic_area_ha(polys, metric_crs),
              'n_positives': counts,
              'retained': kept},
             geometry=list(polys), crs=metric_crs)
@@ -838,7 +850,7 @@ def main(args):
             gdf = gpd.GeoDataFrame(
                 {'poly_id': idx,
                  'n_patches': [int((res['owner'] == i).sum()) for i in idx],
-                 'area_ha': shapely.area(polys_n) / 1e4,
+                 'area_ha': geodesic_area_ha(polys_n, metric_crs),
                  'n_positives': res['counts'][idx]},
                 geometry=list(polys_n), crs=metric_crs)
             to_file(gdf, f'round{n}_footprints')
